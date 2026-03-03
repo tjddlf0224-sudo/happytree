@@ -222,6 +222,55 @@ body {
   font-size: 11px; color: var(--teal); margin-top: 3px; display: none;
 }
 
+/* ── 노드 메뉴 패널 ── */
+#node-menu-overlay {
+  position:fixed; inset:0; z-index:200;
+  background:rgba(0,0,0,0.35);
+}
+#node-menu-panel {
+  display:none;
+  position:fixed; left:50%; bottom:0;
+  transform:translateX(-50%);
+  width:min(420px, 100vw);
+  background:#fff; border-radius:20px 20px 0 0;
+  padding:20px 16px 36px;
+  z-index:201;
+  box-shadow:0 -4px 24px rgba(0,0,0,.18);
+  animation: slideUp .2s ease;
+}
+#nmp-header {
+  display:flex; align-items:center; gap:14px;
+  padding-bottom:16px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:14px;
+}
+#nmp-photo-wrap {
+  width:56px; height:56px; border-radius:12px;
+  background:var(--teal); overflow:hidden; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+#nmp-photo-icon { font-size:28px; }
+#nmp-photo-img  { width:100%; height:100%; object-fit:cover; }
+#nmp-name { font-size:18px; font-weight:800; color:var(--text); }
+#nmp-sub  { font-size:13px; color:var(--sub); margin-top:3px; }
+#nmp-btns {
+  display:grid; grid-template-columns:1fr 1fr 1fr;
+  gap:10px;
+}
+.nmp-btn {
+  padding:14px 6px; border:none; border-radius:14px;
+  font-size:14px; font-weight:700; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+  touch-action:manipulation; transition:opacity .15s;
+}
+.nmp-btn:active { opacity:0.7; }
+.nmp-edit    { background:#eafaf1; color:#27ae60; }
+.nmp-spouse  { background:#fdecea; color:#e74c3c; }
+.nmp-parent  { background:#eaf4fb; color:#2980b9; }
+.nmp-child   { background:#e8f8fd; color:#2bbcd4; }
+.nmp-sibling { background:#f3f0fa; color:#8e44ad; }
+.nmp-delete  { background:#fdedec; color:#c0392b; }
+
 /* 순서 변경 UI */
 .order-row { display:flex; align-items:center; gap:10px; }
 .order-btn {
@@ -266,6 +315,27 @@ body {
     <div class="ei">🌱</div>
     <p>아직 가계도가 없어요.<br>오른쪽 아래 <strong>＋</strong> 버튼으로<br>첫 인물을 추가해 보세요!</p>
   </div>
+
+<!-- ═══ 노드 메뉴 오버레이 ═══ -->
+<div id="node-menu-overlay" style="display:none" onclick="closeMenu()"></div>
+<div id="node-menu-panel">
+  <div id="nmp-header">
+    <div id="nmp-photo-wrap"><div id="nmp-photo-icon"></div><img id="nmp-photo-img" style="display:none" alt=""></div>
+    <div id="nmp-info">
+      <div id="nmp-name"></div>
+      <div id="nmp-sub"></div>
+    </div>
+  </div>
+  <div id="nmp-btns">
+    <button class="nmp-btn nmp-edit"    onclick="closeMenu();handleMenu('edit',    window._menuId)">✏️ 편집</button>
+    <button class="nmp-btn nmp-spouse"  onclick="closeMenu();handleMenu('spouse',  window._menuId)">💍 배우자</button>
+    <button class="nmp-btn nmp-parent"  onclick="closeMenu();handleMenu('parent',  window._menuId)">👴 부모</button>
+    <button class="nmp-btn nmp-child"   onclick="closeMenu();handleMenu('child',   window._menuId)">👶 자녀</button>
+    <button class="nmp-btn nmp-sibling" onclick="closeMenu();handleMenu('sibling', window._menuId)">🤝 형제</button>
+    <button class="nmp-btn nmp-delete"  onclick="closeMenu();handleMenu('delete',  window._menuId)">🗑️ 삭제</button>
+  </div>
+</div>
+
   <button id="fab-add" onclick="openAddModal(null,null,null)">＋</button>
 </div>
 
@@ -372,640 +442,48 @@ function CG()    { return 12; }   // 부부 사이 gap
 function HG()    { return 52; }   // 쌍 사이 수평 gap
 function VG()    { return 130; }  // 세대 수직 gap
 function LH()    { return 50; }   // 라벨 높이 (이름+나이 공간)
-function RAD_R() { return 80; }   // 방사형 메뉴 반경
-
-// ══════════════════════════════════════════════════
-// 전역 상태
-// ══════════════════════════════════════════════════
-const mkTab = () => ({ members: [], relations: [] });
-const S = {
-  tab:    '친가',
-  data:   Object.fromEntries(TABS.map(t=>[t, mkTab()])),
-  selfId: Object.fromEntries(TABS.map(t=>[t, null])),
-  gender: 'male',
-  svg: null, zoom: null,
-};
-
-// ══════════════════════════════════════════════════
-// 초기화
-// ══════════════════════════════════════════════════
-window.addEventListener('DOMContentLoaded', async () => {
-  initD3();
-  await loadData();
-  hideLoading();
-  // 모바일 렌더링 완료 후 여러 번 재시도 (레이아웃 확정 대기)
-  setTimeout(autoFit, 100);
-  setTimeout(autoFit, 400);
-  setTimeout(autoFit, 900);
-});
-
-// 화면 회전 시 자동 재맞춤
-window.addEventListener('orientationchange', ()=>{ setTimeout(autoFit, 300); });
-window.addEventListener('resize', ()=>{ clearTimeout(window._rzt); window._rzt=setTimeout(autoFit,200); });
-
-function initD3() {
-  S.svg  = d3.select('#tree-svg');
-  S.zoom = d3.zoom()
-    .scaleExtent([0.08, 5])
-    .filter(ev => {
-      // ✅ 모바일 단일터치는 pan, 2터치만 pinch-zoom
-      if (ev.type === 'touchstart') return ev.touches.length >= 2;
-      return !ev.button;
-    })
-    .on('zoom', e => d3.select('#canvas-g').attr('transform', e.transform));
-  S.svg.call(S.zoom);
-  S.svg.on('click', () => closeMenu());
-}
-
-async function loadData() {
-  try {
-    const res  = await api({ action:'getAll' });
-    const allM = res.members   || [];
-    const allR = res.relations || [];
-    TABS.forEach(tab => {
-      S.data[tab].members   = allM.filter(m => (m.tab||'친가') === tab);
-      S.data[tab].relations = allR.filter(r => (r.tab||'친가') === tab);
-      const self = S.data[tab].members.find(m => m.isSelf==='true'||m.isSelf===true);
-      if (self) S.selfId[tab] = self.id;
-    });
-    renderTree();
-    autoFit();
-  } catch(err) {
-    showToast('데이터 로드 실패: ' + (err.message||'서버 오류'), 5000);
-  }
-}
-
-
-
-// ══════════════════════════════════════════════════
-// 탭 전환
-// ══════════════════════════════════════════════════
-function switchTab(tab, el) {
-  S.tab = tab;
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  closeMenu();
-  renderTree();
-}
-
-// ══════════════════════════════════════════════════
-// 렌더링
-// ══════════════════════════════════════════════════
-function renderTree() {
-  // 모바일 여부에 따라 레이아웃 값 결정
-  var _HR=HR(), _CG=CG(), _HG=HG(), _VG=VG(), _LH=LH();
-  const g = d3.select('#canvas-g');
-  g.selectAll('*').remove();
-  closeMenu();
-
-  const { members, relations } = S.data[S.tab];
-  const emEl = document.getElementById('empty-state');
-  if (!members.length) { emEl.style.display='flex'; return; }
-  emEl.style.display = 'none';
-
-  // ── 인덱스 구성 ──────────────────────────────
-  const mMap     = Object.fromEntries(members.map(m=>[m.id,m]));
-  const spouseOf = {};   // id → spouseId
-  const kidsOf   = {};   // parentId → Set<childId>  (parent-child only)
-
-  relations.forEach(r => {
-    if (r.relationType === 'spouse') {
-      spouseOf[r.person1Id] = r.person2Id;
-      spouseOf[r.person2Id] = r.person1Id;
-    }
-    if (r.relationType === 'parent-child') {
-      if (!kidsOf[r.person1Id]) kidsOf[r.person1Id] = new Set();
-      kidsOf[r.person1Id].add(r.person2Id);
-    }
-    // ✅ Fix #1: sibling 관계 → 공통 부모 아래 자녀로 취급 (렌더링 시 parent-child로 표현)
-    // sibling 저장은 참조용이며, 실제 트리는 parent-child 기반으로만 그림
-    // (형제 추가 시 doLinkRelation이 parent-child도 함께 생성하므로 충분)
-  });
-
-  // ── BFS 세대 배정 ────────────────────────────
-  const levelOf = {};
-  const visited = new Set();
-  const hasParent = new Set(
-    relations.filter(r=>r.relationType==='parent-child').map(r=>r.person2Id)
-  );
-  let roots = members.filter(m => !hasParent.has(m.id));
-  if (!roots.length) roots = [members[0]];
-
-  function bfs(startId, lv) {
-    const q = [[startId, lv]];
-    while (q.length) {
-      const [id, l] = q.shift();
-      if (visited.has(id)) continue;
-      visited.add(id); levelOf[id] = l;
-      const sp = spouseOf[id];
-      if (sp && !visited.has(sp)) { visited.add(sp); levelOf[sp] = l; }
-      allKids(id).forEach(c => { if (!visited.has(c)) q.push([c, l+1]); });
-    }
-  }
-  // ✅ Fix #3: 삽입 순서 대신 이름순으로 roots 정렬 → 배치 일관성
-  roots.sort((a,b) => (a.name||'').localeCompare(b.name||'', 'ko'));
-  roots.forEach(r => bfs(r.id, 0));
-  members.forEach(m => { if (levelOf[m.id] === undefined) levelOf[m.id] = 0; });
-
-  const levels  = [...new Set(Object.values(levelOf))].sort((a,b)=>a-b);
-  const maxLv   = levels.length ? Math.max(...levels) : 0;
-
-  // ── pair 구성 ────────────────────────────────
-  const pairDone = new Set();
-  function pairW(p) { return p.isCouple ? (_HR*4+_CG) : _HR*2; }
-
-  const pairsOf = {};
-  levels.forEach(lv => {
-    // order 필드 기준 정렬 (없으면 배열 순서 유지)
-    const ids = members
-      .filter(m => levelOf[m.id] === lv)
-      .sort((a,b) => {
-        var oa = (a.order !== undefined && a.order !== null) ? Number(a.order) : 9999;
-        var ob = (b.order !== undefined && b.order !== null) ? Number(b.order) : 9999;
-        if (oa !== ob) return oa - ob;
-        return members.indexOf(a) - members.indexOf(b);
-      })
-      .map(m=>m.id);
-
-    const pairs = [];
-    ids.forEach(id => {
-      if (pairDone.has(id)) return;
-      const sp = spouseOf[id];
-      if (sp && levelOf[sp]===lv && !pairDone.has(sp)) {
-        const left  = (mMap[id]?.gender==='male') ? id : sp;
-        const right = (left===id) ? sp : id;
-        pairs.push({left, right, isCouple:true});
-        pairDone.add(id); pairDone.add(sp);
-      } else if (!pairDone.has(id)) {
-        pairs.push({left:id, right:null, isCouple:false});
-        pairDone.add(id);
-      }
-    });
-    pairsOf[lv] = pairs;
-  });
-
-  // ── X 좌표 계산 (자녀 중앙 정렬 + 겹침 해소) ─
-  const pairCX = new Map();
-
-  // 초기 배치
-  levels.forEach(lv => {
-    const ps = pairsOf[lv]||[];
-    const tw = ps.reduce((s,p)=>s+pairW(p),0) + _HG*Math.max(ps.length-1,0);
-    let cx = -tw/2;
-    ps.forEach(p => { pairCX.set(p.left, cx+pairW(p)/2); cx+=pairW(p)+_HG; });
-  });
-
-  // 아래→위: 부모를 자녀 중앙으로
-  for (let lv=maxLv-1; lv>=0; lv--) {
-    (pairsOf[lv]||[]).forEach(pair => {
-      const kids = directKids(pair.left, pair.isCouple?pair.right:null, lv);
-      if (!kids.length) return;
-      const xs = kids.map(c => {
-        const cp = (pairsOf[lv+1]||[]).find(p=>p.left===c||p.right===c);
-        return cp ? pairCX.get(cp.left) : null;
-      }).filter(x=>x!==null);
-      if (xs.length) pairCX.set(pair.left, xs.reduce((a,b)=>a+b,0)/xs.length);
-    });
-    resolveOverlap(lv);
-  }
-  // 위→아래: 간격 재보정
-  for (let lv=1; lv<=maxLv; lv++) resolveOverlap(lv);
-
-  function resolveOverlap(lv) {
-    const sorted = [...(pairsOf[lv]||[])].sort((a,b)=>(pairCX.get(a.left)||0)-(pairCX.get(b.left)||0));
-    for (let i=1;i<sorted.length;i++) {
-      const prev=sorted[i-1], cur=sorted[i];
-      const minX = (pairCX.get(prev.left)||0)+pairW(prev)/2+_HG+pairW(cur)/2;
-      if ((pairCX.get(cur.left)||0)<minX) pairCX.set(cur.left, minX);
-    }
-  }
-
-  // nodePos 확정
-  const nodePos = {};
-  members.forEach(m => { nodePos[m.id]={x:0, y:levelOf[m.id]*(_HR*2+_LH+_VG)}; });
-  levels.forEach(lv => {
-    (pairsOf[lv]||[]).forEach(pair => {
-      const cx = pairCX.get(pair.left)||0;
-      if (pair.isCouple) {
-        nodePos[pair.left].x  = cx - _HR - _CG/2;
-        nodePos[pair.right].x = cx + _HR + _CG/2;
-      } else {
-        nodePos[pair.left].x = cx;
-      }
-    });
-  });
-
-  // ── 헬퍼 ─────────────────────────────────────
-  function allKids(id) {
-    const s = new Set([...(kidsOf[id]||[])]);
-    const sp = spouseOf[id];
-    if (sp) (kidsOf[sp]||[]).forEach(c=>s.add(c));
-    return [...s];
-  }
-  function directKids(repId, sp, lv) {
-    const s = new Set();
-    [...(kidsOf[repId]||[])].forEach(c=>{ if((levelOf[c]??-1)===lv+1) s.add(c); });
-    if (sp) [...(kidsOf[sp]||[])].forEach(c=>{ if((levelOf[c]??-1)===lv+1) s.add(c); });
-    return [...s];
-  }
-
-  // ── 링크 그리기 ──────────────────────────────
-  const linkG = g.append('g').attr('class','links');
-
-  // 부부선
-  relations.filter(r=>r.relationType==='spouse').forEach(r=>{
-    const a=nodePos[r.person1Id], b=nodePos[r.person2Id];
-    if (!a||!b) return;
-    linkG.append('line')
-      .attr('x1',Math.min(a.x,b.x)+_HR*.75).attr('y1',a.y)
-      .attr('x2',Math.max(a.x,b.x)-_HR*.75).attr('y2',b.y)
-      .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
-  });
-
-  // 부모→자녀선
-  levels.forEach(lv=>{
-    (pairsOf[lv]||[]).forEach(pair=>{
-      const sp  = pair.isCouple?pair.right:null;
-      const kids = directKids(pair.left, sp, lv);
-      if (!kids.length) return;
-
-      const cx  = pairCX.get(pair.left)||0;
-      const py  = nodePos[pair.left].y+_HR;
-      const midY= py+_VG*.4;
-
-      linkG.append('line').attr('x1',cx).attr('y1',py).attr('x2',cx).attr('y2',midY)
-        .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
-
-      const kidXs = kids.map(c=>nodePos[c]?.x).filter(x=>x!==undefined);
-      if (kidXs.length>1) {
-        linkG.append('line')
-          .attr('x1',Math.min(...kidXs)).attr('y1',midY)
-          .attr('x2',Math.max(...kidXs)).attr('y2',midY)
-          .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
-      }
-      kids.forEach(kid=>{
-        const kx=nodePos[kid]?.x, ky=nodePos[kid]?.y-_HR;
-        if (kx===undefined) return;
-        linkG.append('line').attr('x1',kx).attr('y1',midY).attr('x2',kx).attr('y2',ky)
-          .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
-      });
-    });
-  });
-
-  // ── 노드 그리기 ──────────────────────────────
-  const nodeG  = g.append('g').attr('class','nodes');
-  const selfId = S.selfId[S.tab];
-
-  members.forEach(m=>{
-    const p=nodePos[m.id];
-    if (!p) return;
-    const isSelf = m.id===selfId;
-    const fill   = isSelf?'var(--teal)':m.gender==='female'?'var(--female)':'var(--male)';
-
-    const nG = nodeG.append('g')
-      .attr('transform','translate('+p.x+','+p.y+')')
-      .attr('data-id',m.id).style('cursor','pointer')
-      .on('click', function(ev){ ev.stopPropagation(); openMenu(m.id,p.x,p.y); });
-
-    // "나" 주황 링
-    if (isSelf) {
-      nG.append('polygon').attr('points',hexPts(_HR+5))
-        .attr('fill','none').attr('stroke','var(--self-ring)').attr('stroke-width',3);
-    }
-
-    // 육각형
-    nG.append('polygon').attr('points',hexPts(_HR))
-      .attr('fill',fill).attr('stroke','#fff').attr('stroke-width',2.5);
-
-    // 성별 아이콘 → SVG 실루엣으로 대체 (아래 iconG에서 처리)
-
-    // ME 배지
-    if (isSelf) {
-      const bd=nG.append('g').attr('transform','translate('+(_HR-1)+','+(-(_HR-1))+')');
-      bd.append('circle').attr('r',9).attr('fill','var(--self-ring)').attr('stroke','#fff').attr('stroke-width',1.5);
-      bd.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-        .attr('fill','#fff').attr('font-size','6px').attr('font-weight','700').attr('pointer-events','none').text('ME');
-    }
-
-    // ✅ Fix #2: 촌수 계산 - 배우자는 0촌 처리
-    if (!isSelf && selfId) {
-      const chon = computeChon(m.id, selfId, relations, spouseOf);
-      if (chon !== null) {
-        const bd=nG.append('g').attr('transform','translate('+(-(_HR-1))+','+(-(_HR-1))+')');
-        bd.append('circle').attr('r',9).attr('fill','#fff').attr('stroke','var(--teal)').attr('stroke-width',1.5);
-        bd.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-          .attr('fill','var(--teal-dk)').attr('font-size','6.5px').attr('font-weight','700').attr('pointer-events','none')
-          .text(chon===0?'배우자':chon+'촌');
-      }
-    }
-
-    // 인물 아이콘 (육각형 안) — 사진 or 성별 실루엣
-    if (m.photoFileId) {
-      // Drive thumbnail: 육각형 clipPath로 마스킹
-      const clipId = 'hclip_' + m.id.replace(/[^a-zA-Z0-9]/g,'_');
-      const defs = nG.append('defs');
-      defs.append('clipPath').attr('id', clipId)
-        .append('polygon').attr('points', hexPts(_HR - 1));
-      nG.append('image')
-        .attr('href', 'https://lh3.googleusercontent.com/d/'+m.photoFileId+'=w120')
-        .attr('x', -(_HR-1)).attr('y', -(_HR-1))
-        .attr('width', (_HR-1)*2).attr('height', (_HR-1)*2)
-        .attr('preserveAspectRatio','xMidYMid slice')
-        .attr('clip-path', 'url(#'+clipId+')')
-        .attr('pointer-events','none');
-    } else {
-      // 실루엣 (성별)
-      const iconG = nG.append('g').attr('pointer-events','none')
-        .attr('transform','translate(0,1)').attr('opacity','0.88');
-      if (m.gender === 'female') {
-        iconG.append('circle').attr('cx',0).attr('cy',-11).attr('r',7).attr('fill','rgba(255,255,255,0.92)');
-        iconG.append('rect').attr('x',-2.5).attr('y',-4.5).attr('width',5).attr('height',4).attr('rx',1).attr('fill','rgba(255,255,255,0.92)');
-        iconG.append('path').attr('d','M -9 14 Q -8 -1 0 -1 Q 8 -1 9 14 Z').attr('fill','rgba(255,255,255,0.92)');
-        iconG.append('rect').attr('x',-6).attr('y',-1).attr('width',12).attr('height',3.5).attr('rx',1.5).attr('fill','rgba(255,255,255,0.7)');
-      } else {
-        iconG.append('circle').attr('cx',0).attr('cy',-11).attr('r',7).attr('fill','rgba(255,255,255,0.92)');
-        iconG.append('rect').attr('x',-2.5).attr('y',-4.5).attr('width',5).attr('height',3.5).attr('rx',1).attr('fill','rgba(255,255,255,0.92)');
-        iconG.append('path').attr('d','M -10 14 L -8 -1 L 8 -1 L 10 14 Z').attr('fill','rgba(255,255,255,0.92)');
-        iconG.append('rect').attr('x',-8).attr('y','-1').attr('width',16).attr('height',3.5).attr('rx',1.5).attr('fill','rgba(255,255,255,0.7)');
-      }
-    }
-
-    // 이름 (아래) - 육각형 바깥 충분한 여백
-    var nameFontSize = '13px';
-    var subFontSize  = '11px';
-    var nameY        = _HR + 18;   // 육각형 아래 여백
-    var subY         = _HR + 33;   // 이름 아래 줄
-    nG.append('text').attr('text-anchor','middle').attr('y', nameY)
-      .attr('fill','#222').attr('font-size', nameFontSize).attr('font-weight','700')
-      .attr('pointer-events','none').text(clip(m.name||'(미입력)', 6));
-
-    // 서브라벨 (나이/메모)
-    const sub=buildSub(m);
-    if (sub) {
-      nG.append('text').attr('text-anchor','middle').attr('y', subY)
-        .attr('fill','#666').attr('font-size', subFontSize).attr('pointer-events','none').text(sub);
-    }
-  });
-
-  autoFit();
-}
-
-// ══════════════════════════════════════════════════
-// 유틸 함수
-// ══════════════════════════════════════════════════
-function hexPts(r) {
-  return Array.from({length:6},(_,i)=>{
-    const a=Math.PI/180*(60*i-30);
-    return (r*Math.cos(a))+','+(r*Math.sin(a));
-  }).join(' ');
-}
-function clip(s,n) { return s.length>n?s.slice(0,n-1)+'…':s; }
-
-// 연 나이 계산 (한국식: 올해 - 출생년도 + 1)
-function koreanAge(birthYear, baseYear) {
-  const by = parseInt(birthYear, 10);
-  if (!by || isNaN(by)) return null;
-  return (baseYear||new Date().getFullYear()) - by + 1;
-}
-
-function buildSub(m) {
-  const THIS_YEAR = new Date().getFullYear();
-  const p = [];
-  if (m.note) p.push(m.note);
-
-  if (m.birthYear) {
-    if (m.deathYear) {
-      // 사망자: 향년 나이
-      const age = koreanAge(m.birthYear, parseInt(m.deathYear, 10));
-      if (age !== null && age > 0) p.push('향년 '+age+'세');
-    } else {
-      // 생존자: 현재 나이
-      const age = koreanAge(m.birthYear, THIS_YEAR);
-      if (age !== null && age > 0) p.push(age+'세');
-    }
-  }
-
-  const s = p.join(' · ');
-  return s.length > 13 ? s.slice(0, 12) + '…' : s;
-}
-
-// ✅ Fix #2: 촌수 계산
-// - 나와 배우자: 0촌 (배우자 표시)
-// - 나의 부모: 1촌
-// - 형제: 2촌
-// - BFS 기반이지만 배우자 엣지를 별도 처리해 관습적 촌수에 맞춤
-function computeChon(targetId, selfId, relations, spouseOf) {
-  if (!selfId || targetId===selfId) return null;
-
-  // 나의 배우자 → 0촌
-  if (spouseOf[selfId]===targetId) return 0;
-
-  // 무방향 그래프 (parent-child만)
-  const adj = {};
-  relations.forEach(r=>{
-    if (r.relationType==='parent-child') {
-      if (!adj[r.person1Id]) adj[r.person1Id]=[];
-      if (!adj[r.person2Id]) adj[r.person2Id]=[];
-      adj[r.person1Id].push(r.person2Id);
-      adj[r.person2Id].push(r.person1Id);
-    }
-  });
-
-  // 배우자도 같은 노드로 취급 (나의 배우자 시작점도 추가)
-  const starts = [selfId];
-  const mySp   = spouseOf[selfId];
-  if (mySp) starts.push(mySp);
-
-  const dist = {};
-  starts.forEach(s=>{ dist[s]=0; });
-  const q = [...starts];
-
-  while (q.length) {
-    const cur=q.shift();
-    (adj[cur]||[]).forEach(nb=>{
-      if (dist[nb]===undefined) {
-        dist[nb]=dist[cur]+1;
-        q.push(nb);
-      }
-    });
-  }
-
-  // 대상의 배우자도 같은 촌수로 취급
-  const targetSp = spouseOf[targetId];
-  let d = dist[targetId];
-  if (d===undefined && targetSp) d=dist[targetSp];
-  if (d===undefined) return null;
-
-  // 배우자 경유 없이 직계만: 실제 한국 촌수는 BFS 거리와 동일
-  return d;
-}
-
-// ══════════════════════════════════════════════════
-// 줌
-// ══════════════════════════════════════════════════
-
-// ══════════════════════════════════════════════════
-async function onNodeDragEnd(dragId, dropX, dropY) {
-  // 드롭 위치에서 가장 가까운 다른 노드 찾기
-  var tab     = S.tab;
-  var members = S.data[tab].members;
-  var svg     = document.getElementById('tree-svg');
-  var tf      = d3.zoomTransform(svg);
-
-  // 캔버스 좌표 → 각 노드의 현재 화면 위치와 비교
-  var closest = null;
-  var minDist = 999999;
-
-  d3.select('#canvas-g').selectAll('g[data-id]').each(function() {
-    var nodeId = d3.select(this).attr('data-id');
-    if (nodeId === dragId) return;
-    var t = d3.select(this).attr('transform');
-    var match = t && t.match(/translate\(([^,]+),([^)]+)\)/);
-    if (!match) return;
-    var nx = parseFloat(match[1]);
-    var ny = parseFloat(match[2]);
-    var dist = Math.sqrt((dropX-nx)*(dropX-nx)+(dropY-ny)*(dropY-ny));
-    if (dist < minDist) { minDist = dist; closest = nodeId; }
-  });
-
-  // 거리 임계값: HR*3 이내여야 교환
-  if (!closest || minDist > HR() * 4) {
-    renderTree(); return;
-  }
-
-  // 두 노드의 order 교환
-  var dragM   = members.find(function(m){ return m.id === dragId; });
-  var dropM   = members.find(function(m){ return m.id === closest; });
-  if (!dragM || !dropM) { renderTree(); return; }
-
-  // order 값 계산: 없으면 배열 index로 초기화
-  var allOrders = members.map(function(m,i){ return (m.order!==undefined&&m.order!==null) ? Number(m.order) : i*10; });
-  var dragIdx = members.indexOf(dragM);
-  var dropIdx = members.indexOf(dropM);
-  var dragOrder = allOrders[dragIdx];
-  var dropOrder = allOrders[dropIdx];
-
-  // 교환
-  dragM.order = dropOrder;
-  dropM.order = dragOrder;
-
-  // 서버 저장 (비동기, 실패해도 로컬은 반영)
-  try {
-    await api({action:'updateMember', data:{id:dragId,  order:String(dragOrder)}});
-    await api({action:'updateMember', data:{id:closest, order:String(dropOrder)}});
-    showToast('순서를 변경했습니다.');
-  } catch(e) {
-    showToast('순서 변경 저장 실패: '+e.message, 3000);
-  }
-
-  renderTree();
-  autoFit();
-}
-
-function autoFit() {
-  function tryFit(attempts) {
-    var svg = document.getElementById('tree-svg');
-    var g   = document.getElementById('canvas-g');
-    if (!g) return;
-
-    // 화면 크기: main 영역 기준으로 정확히 계산
-    var mainEl = document.getElementById('main');
-    var sw = mainEl ? mainEl.clientWidth  : window.innerWidth;
-    var sh = mainEl ? mainEl.clientHeight : (window.innerHeight - 160);
-
-    if ((sw < 10 || sh < 10) && attempts > 0) {
-      setTimeout(function(){ tryFit(attempts - 1); }, 150);
-      return;
-    }
-
-    var bb = g.getBBox();
-    if (!bb.width || !bb.height) {
-      if (attempts > 0) { setTimeout(function(){ tryFit(attempts - 1); }, 150); }
-      return;
-    }
-
-    // 노드 수에 따라 패딩 조정: 노드 적으면 더 크게
-    var nodeCount = S.data[S.tab].members.length;
-    var pad = nodeCount <= 2 ? 120 : (nodeCount <= 5 ? 80 : 60);
-
-    // 최대 스케일: 노드 적을수록 더 크게 표시
-    var maxSc = nodeCount <= 1 ? 2.5 : (nodeCount <= 3 ? 2.0 : (nodeCount <= 6 ? 1.5 : 1.2));
-
-    var sc = Math.min((sw - pad) / bb.width, (sh - pad) / bb.height, maxSc);
-    if (sc <= 0 || !isFinite(sc)) sc = 1.0;
-
-    var tx = sw / 2 - sc * (bb.x + bb.width  / 2);
-    var ty = sh / 2 - sc * (bb.y + bb.height / 2);
-    S.svg.call(S.zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(sc));
-  }
-  requestAnimationFrame(function(){ tryFit(8); });
-}
-function resetZoom() { autoFit(); }
-
-// ══════════════════════════════════════════════════
-// 방사형 메뉴
-// ══════════════════════════════════════════════════
-const MENU_ITEMS = [
-  {key:'spouse',   label:'배우자', angle:0,   color:'#e74c3c'},
-  {key:'child',    label:'자녀',   angle:60,  color:'#2bbcd4'},
-  {key:'sibling',  label:'형제',   angle:120, color:'#9b59b6'},
-  {key:'parent',   label:'부모',   angle:180, color:'#3498db'},
-  {key:'delete',   label:'삭제',   angle:240, color:'#c0392b'},
-];
-
-function openMenu(id, nx, ny) {
-  closeMenu();
-  const m=S.data[S.tab].members.find(x=>x.id===id);
+// ── 노드 메뉴 패널 ──────────────────────────────
+function openMenu(id) {
+  const m = S.data[S.tab].members.find(x=>x.id===id);
   if (!m) return;
+  window._menuId = id;
 
-  // 경계 클리핑: RAD_R(메뉴반경) + 버튼반경(28) + 여백(16)
-  const svgEl=document.getElementById('tree-svg');
-  const tf=d3.zoomTransform(svgEl);
-  const sw=svgEl.clientWidth  || window.innerWidth;
-  const sh=svgEl.clientHeight || window.innerHeight - 160;
-  // 버튼 반경(28) + RAD_R(80) + 여유(20) = 128px 마진
-  const mr = RAD_R() + 28 + 20;
-  let sx = Math.max(mr, Math.min(sw - mr, tf.applyX(nx)));
-  let sy = Math.max(mr, Math.min(sh - mr, tf.applyY(ny)));
-  const ax=(sx-tf.x)/tf.k, ay=(sy-tf.y)/tf.k;
+  // 헤더 정보 채우기
+  document.getElementById('nmp-name').textContent = m.name || '(이름없음)';
+  const age = m.birthYear ? (new Date().getFullYear() - Number(m.birthYear)) + '세' : '';
+  const note = m.note || '';
+  document.getElementById('nmp-sub').textContent = [age, note].filter(Boolean).join(' · ');
 
-  const menuG=d3.select('#canvas-g').append('g')
-    .attr('class','radial-menu').attr('transform','translate('+ax+','+ay+')');
+  // 사진
+  const img  = document.getElementById('nmp-photo-img');
+  const icon = document.getElementById('nmp-photo-icon');
+  const wrap = document.getElementById('nmp-photo-wrap');
+  wrap.style.background = m.gender==='female' ? 'var(--female)' : 'var(--teal)';
+  if (m.photoFileId) {
+    img.src = 'https://lh3.googleusercontent.com/d/'+m.photoFileId+'=w120';
+    img.style.display = 'block';
+    icon.style.display = 'none';
+  } else {
+    img.style.display = 'none';
+    icon.style.display = 'block';
+    icon.textContent = m.gender==='female' ? '👩' : '👨';
+  }
 
-  menuG.append('circle').attr('r',RAD_R()+38).attr('fill','rgba(0,0,0,.22)')
-    .on('click',e=>{ e.stopPropagation(); closeMenu(); });
+  // 배우자 버튼: 이미 배우자 있으면 숨김
+  const hasSpouse = S.data[S.tab].relations.some(r=>
+    r.relationType==='spouse'&&(r.person1Id===id||r.person2Id===id));
+  document.querySelector('.nmp-spouse').style.display = hasSpouse ? 'none' : '';
 
-  MENU_ITEMS.forEach(item=>{
-    const rad=item.angle*Math.PI/180;
-    const ix=RAD_R()*Math.cos(rad), iy=RAD_R()*Math.sin(rad);
-
-    const iG=menuG.append('g').attr('transform','translate('+ix+','+iy+')')
-      .style('cursor','pointer')
-      .on('click',e=>{ e.stopPropagation(); closeMenu(); handleMenu(item.key,id); });
-
-    var mr = isMobile() ? 28 : 22;
-    const circ=iG.append('circle').attr('r',mr).attr('fill',item.color)
-      .attr('stroke','#fff').attr('stroke-width',2);
-    iG.on('mouseover',()=>circ.attr('r',mr+3)).on('mouseout',()=>circ.attr('r',mr));
-
-    iG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-      .attr('fill','#fff').attr('font-size', isMobile()?'12px':'10px').attr('font-weight','700')
-      .attr('pointer-events','none').text(item.label);
-  });
-
-  // 가운데: 편집 버튼
-  menuG.append('circle').attr('r',HR()+1).attr('fill','#27ae60')
-    .attr('stroke','#fff').attr('stroke-width',2.5)
-    .style('cursor','pointer')
-    .on('click',function(e){ e.stopPropagation(); closeMenu(); handleMenu('edit',id); });
-  menuG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-    .attr('fill','#fff').attr('font-size','13px').attr('font-weight','700')
-    .attr('pointer-events','none').text('편집');
+  document.getElementById('node-menu-overlay').style.display = 'block';
+  document.getElementById('node-menu-panel').style.display   = 'block';
 }
 
 function closeMenu() {
+  document.getElementById('node-menu-overlay').style.display = 'none';
+  document.getElementById('node-menu-panel').style.display   = 'none';
   d3.select('#canvas-g').selectAll('.radial-menu').remove();
 }
+
 
 function handleMenu(key, targetId) {
   if (key==='edit')   { openEditModal(targetId); return; }
@@ -1432,7 +910,7 @@ async function saveMember() {
     return;
   } finally {
     hideLoading();
-    renderTree();
+    await loadData();
   }
 }
 
