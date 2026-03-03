@@ -497,10 +497,15 @@ function renderTree() {
 
   const pairsOf = {};
   levels.forEach(lv => {
-    // ✅ Fix #3: 같은 레벨 내 이름순 정렬
+    // order 필드 기준 정렬 (없으면 배열 순서 유지)
     const ids = members
       .filter(m => levelOf[m.id] === lv)
-      .sort((a,b) => (a.name||'').localeCompare(b.name||'','ko'))
+      .sort((a,b) => {
+        var oa = (a.order !== undefined && a.order !== null) ? Number(a.order) : 9999;
+        var ob = (b.order !== undefined && b.order !== null) ? Number(b.order) : 9999;
+        if (oa !== ob) return oa - ob;
+        return members.indexOf(a) - members.indexOf(b);
+      })
       .map(m=>m.id);
 
     const pairs = [];
@@ -641,7 +646,26 @@ function renderTree() {
     const nG = nodeG.append('g')
       .attr('transform','translate('+p.x+','+p.y+')')
       .attr('data-id',m.id).style('cursor','pointer')
-      .on('click', ev=>{ ev.stopPropagation(); openMenu(m.id,p.x,p.y); });
+      .on('click', ev=>{ ev.stopPropagation(); openMenu(m.id,p.x,p.y); })
+      .call(d3.drag()
+        .on('start', function(ev) {
+          ev.sourceEvent.stopPropagation();
+          closeMenu();
+          S._dragId  = m.id;
+          S._dragPos = {x: p.x, y: p.y};
+          d3.select(this).raise();
+          d3.select(this).selectAll('polygon').attr('opacity','0.65');
+        })
+        .on('drag', function(ev) {
+          d3.select(this).attr('transform','translate('+ev.x+','+ev.y+')');
+        })
+        .on('end', function(ev) {
+          d3.select(this).selectAll('polygon').attr('opacity','1');
+          d3.select(this).attr('transform','translate('+p.x+','+p.y+')');
+          onNodeDragEnd(m.id, ev.x, ev.y);
+          S._dragId = null;
+        })
+      );
 
     // "나" 주황 링
     if (isSelf) {
@@ -819,6 +843,66 @@ function computeChon(targetId, selfId, relations, spouseOf) {
 // ══════════════════════════════════════════════════
 // 줌
 // ══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
+// 노드 드래그로 순서 변경
+// ══════════════════════════════════════════════════
+async function onNodeDragEnd(dragId, dropX, dropY) {
+  // 드롭 위치에서 가장 가까운 다른 노드 찾기
+  var tab     = S.tab;
+  var members = S.data[tab].members;
+  var svg     = document.getElementById('tree-svg');
+  var tf      = d3.zoomTransform(svg);
+
+  // 캔버스 좌표 → 각 노드의 현재 화면 위치와 비교
+  var closest = null;
+  var minDist = 999999;
+
+  d3.select('#canvas-g').selectAll('g[data-id]').each(function() {
+    var nodeId = d3.select(this).attr('data-id');
+    if (nodeId === dragId) return;
+    var t = d3.select(this).attr('transform');
+    var match = t && t.match(/translate\(([^,]+),([^)]+)\)/);
+    if (!match) return;
+    var nx = parseFloat(match[1]);
+    var ny = parseFloat(match[2]);
+    var dist = Math.sqrt((dropX-nx)*(dropX-nx)+(dropY-ny)*(dropY-ny));
+    if (dist < minDist) { minDist = dist; closest = nodeId; }
+  });
+
+  // 거리 임계값: HR*3 이내여야 교환
+  if (!closest || minDist > HR() * 4) {
+    renderTree(); return;
+  }
+
+  // 두 노드의 order 교환
+  var dragM   = members.find(function(m){ return m.id === dragId; });
+  var dropM   = members.find(function(m){ return m.id === closest; });
+  if (!dragM || !dropM) { renderTree(); return; }
+
+  // order 값 계산: 없으면 배열 index로 초기화
+  var allOrders = members.map(function(m,i){ return (m.order!==undefined&&m.order!==null) ? Number(m.order) : i*10; });
+  var dragIdx = members.indexOf(dragM);
+  var dropIdx = members.indexOf(dropM);
+  var dragOrder = allOrders[dragIdx];
+  var dropOrder = allOrders[dropIdx];
+
+  // 교환
+  dragM.order = dropOrder;
+  dropM.order = dragOrder;
+
+  // 서버 저장 (비동기, 실패해도 로컬은 반영)
+  try {
+    await api({action:'updateMember', data:{id:dragId,  order:String(dragOrder)}});
+    await api({action:'updateMember', data:{id:closest, order:String(dropOrder)}});
+    showToast('순서를 변경했습니다.');
+  } catch(e) {
+    showToast('순서 변경 저장 실패: '+e.message, 3000);
+  }
+
+  renderTree();
+  autoFit();
+}
+
 function autoFit() {
   function tryFit(attempts) {
     var svg = document.getElementById('tree-svg');
@@ -863,13 +947,11 @@ function resetZoom() { autoFit(); }
 // 방사형 메뉴
 // ══════════════════════════════════════════════════
 const MENU_ITEMS = [
-  {key:'spouse',         label:'배우자', angle:0,    color:'#e74c3c'},
-  {key:'child-son',      label:'아들',   angle:60,   color:'#2bbcd4'},
-  {key:'child-daughter', label:'딸',     angle:120,  color:'#e91e63'},
-  {key:'sibling',        label:'형제',   angle:180,  color:'#9b59b6'},
-  {key:'sister',         label:'자매',   angle:240,  color:'#e67e22'},
-  {key:'parent',         label:'부모',   angle:300,  color:'#3498db'},
-  {key:'delete',         label:'삭제',   angle:360,  color:'#c0392b'},
+  {key:'spouse',   label:'배우자', angle:0,   color:'#e74c3c'},
+  {key:'child',    label:'자녀',   angle:60,  color:'#2bbcd4'},
+  {key:'sibling',  label:'형제',   angle:120, color:'#9b59b6'},
+  {key:'parent',   label:'부모',   angle:180, color:'#3498db'},
+  {key:'delete',   label:'삭제',   angle:240, color:'#c0392b'},
 ];
 
 function openMenu(id, nx, ny) {
@@ -950,12 +1032,10 @@ function handleMenu(key, targetId) {
   }
 
   const INFO={
-    'parent':        {label:'부모 추가',   defaultGender:'male'},
-    'spouse':        {label:'배우자 추가', defaultGender:'female'},
-    'child-son':     {label:'아들 추가',   defaultGender:'male'},
-    'child-daughter':{label:'딸 추가',     defaultGender:'female'},
-    'sibling':       {label:'형제 추가',   defaultGender:'male'},
-    'sister':        {label:'자매 추가',   defaultGender:'female'},
+    'parent':  {label:'부모 추가',   defaultGender:'male'},
+    'spouse':  {label:'배우자 추가', defaultGender:'female'},
+    'child':   {label:'자녀 추가',   defaultGender:'male'},
+    'sibling': {label:'형제 추가',   defaultGender:'male'},
   };
   openAddModal(targetId, key, INFO[key]);
 }
@@ -1138,7 +1218,7 @@ function renderRelSection(memberId) {
     const typeLabel = {
       'spouse':       '배우자',
       'parent-child': r.person1Id===memberId ? '부모→자녀' : '자녀←부모',
-      'sibling':      '형제/자매',
+      'sibling':      '형제',
     }[r.relationType] || r.relationType;
 
     return '<div class="rel-list-item">'
@@ -1290,7 +1370,7 @@ async function doLinkRelation(relKey, targetId, newId, tab) {
   S.data[tab].relations.push({id:res.id,...ro});
 
   // 형제/자매: 공통 부모 parent-child 연결 (Fix #1 핵심)
-  if (relKey==='sibling'||relKey==='sister') {
+  if (relKey==='sibling') {
     const parentRels=S.data[tab].relations.filter(
       r=>r.relationType==='parent-child'&&r.person2Id===targetId
     );
@@ -1311,7 +1391,7 @@ function doLinkRelationLocal(relKey, targetId, newId, tab) {
   if (!ro) return;
   S.data[tab].relations.push({id:'L_r_'+Date.now(),...ro});
 
-  if (relKey==='sibling'||relKey==='sister') {
+  if (relKey==='sibling') {
     S.data[tab].relations
       .filter(r=>r.relationType==='parent-child'&&r.person2Id===targetId)
       .forEach(pr=>{
@@ -1327,10 +1407,8 @@ function buildRelObj(relKey, targetId, newId, tab) {
   const MAP={
     'parent':        {person1Id:newId,    person2Id:targetId, relationType:'parent-child'},
     'spouse':        {person1Id:targetId, person2Id:newId,    relationType:'spouse'},
-    'child-son':     {person1Id:targetId, person2Id:newId,    relationType:'parent-child'},
-    'child-daughter':{person1Id:targetId, person2Id:newId,    relationType:'parent-child'},
-    'sibling':       {person1Id:targetId, person2Id:newId,    relationType:'sibling'},
-    'sister':        {person1Id:targetId, person2Id:newId,    relationType:'sibling'},
+    'child':   {person1Id:targetId, person2Id:newId, relationType:'parent-child'},
+    'sibling': {person1Id:targetId, person2Id:newId, relationType:'sibling'},
   };
   const r=MAP[relKey];
   return r?{...r,tab}:null;
