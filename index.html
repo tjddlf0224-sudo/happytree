@@ -646,26 +646,45 @@ function renderTree() {
     const nG = nodeG.append('g')
       .attr('transform','translate('+p.x+','+p.y+')')
       .attr('data-id',m.id).style('cursor','pointer')
-      .on('click', ev=>{ ev.stopPropagation(); openMenu(m.id,p.x,p.y); })
-      .call(d3.drag()
-        .on('start', function(ev) {
-          ev.sourceEvent.stopPropagation();
-          closeMenu();
-          S._dragId  = m.id;
-          S._dragPos = {x: p.x, y: p.y};
-          d3.select(this).raise();
-          d3.select(this).selectAll('polygon').attr('opacity','0.65');
-        })
-        .on('drag', function(ev) {
-          d3.select(this).attr('transform','translate('+ev.x+','+ev.y+')');
-        })
-        .on('end', function(ev) {
-          d3.select(this).selectAll('polygon').attr('opacity','1');
-          d3.select(this).attr('transform','translate('+p.x+','+p.y+')');
-          onNodeDragEnd(m.id, ev.x, ev.y);
-          S._dragId = null;
-        })
-      );
+      .on('pointerdown', function(ev) {
+        ev.stopPropagation();
+        var el = this;
+        var mid = m.id, px = p.x, py = p.y;
+        var startX = ev.clientX, startY = ev.clientY;
+        var moved = false;
+        var svgEl = document.getElementById('tree-svg');
+
+        function onMove(e) {
+          var dx = e.clientX - startX, dy = e.clientY - startY;
+          if (!moved && Math.sqrt(dx*dx+dy*dy) > 14) {
+            moved = true;
+            closeMenu();
+            d3.select(el).selectAll('polygon').attr('opacity','0.6');
+          }
+          if (moved) {
+            var tf = d3.zoomTransform(svgEl);
+            var cx = (e.clientX - svgEl.getBoundingClientRect().left - tf.x) / tf.k;
+            var cy = (e.clientY - svgEl.getBoundingClientRect().top  - tf.y) / tf.k;
+            d3.select(el).attr('transform','translate('+cx+','+cy+')');
+          }
+        }
+        function onUp(e) {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup',   onUp);
+          d3.select(el).selectAll('polygon').attr('opacity','1');
+          d3.select(el).attr('transform','translate('+px+','+py+')');
+          if (!moved) {
+            openMenu(mid, px, py);
+          } else {
+            var tf = d3.zoomTransform(svgEl);
+            var fx = (e.clientX - svgEl.getBoundingClientRect().left - tf.x) / tf.k;
+            var fy = (e.clientY - svgEl.getBoundingClientRect().top  - tf.y) / tf.k;
+            onNodeDragEnd(mid, fx, fy);
+          }
+        }
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup',   onUp);
+      });
 
     // "나" 주황 링
     if (isSelf) {
