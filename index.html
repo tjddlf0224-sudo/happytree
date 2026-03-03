@@ -222,6 +222,16 @@ body {
   font-size: 11px; color: var(--teal); margin-top: 3px; display: none;
 }
 
+/* 순서 변경 UI */
+.order-row { display:flex; align-items:center; gap:10px; }
+.order-btn {
+  flex:1; padding:11px; border:2px solid var(--teal); border-radius:10px;
+  font-size:14px; font-weight:700; color:var(--teal); background:#f0fbfd;
+  cursor:pointer; touch-action:manipulation;
+}
+.order-btn:active { background:var(--teal); color:#fff; }
+#mm-order-label { flex:1; text-align:center; font-size:16px; font-weight:700; color:var(--text); }
+
 /* ══════════════════════════════════════════════
    기본값 = 모바일 최적화 크기 (GAS 호환)
 ══════════════════════════════════════════════ */
@@ -313,6 +323,15 @@ body {
       <select id="mm-spouse-select">
         <option value="">— 없음 —</option>
       </select>
+    </div>
+
+    <div class="form-group" id="mm-order-group" style="display:none">
+      <label>형제 순서 (왼쪽 = 손윗사람)</label>
+      <div class="order-row">
+        <button class="order-btn" id="mm-order-left"  onclick="shiftOrder(-1)">◀ 앞으로</button>
+        <span id="mm-order-label">1번째</span>
+        <button class="order-btn" id="mm-order-right" onclick="shiftOrder(1)">뒤로 ▶</button>
+      </div>
     </div>
 
     <!-- ✅ Fix #6: div onclick 제거, label의 for 속성으로만 연결 -->
@@ -646,45 +665,7 @@ function renderTree() {
     const nG = nodeG.append('g')
       .attr('transform','translate('+p.x+','+p.y+')')
       .attr('data-id',m.id).style('cursor','pointer')
-      .on('pointerdown', function(ev) {
-        ev.stopPropagation();
-        var el = this;
-        var mid = m.id, px = p.x, py = p.y;
-        var startX = ev.clientX, startY = ev.clientY;
-        var moved = false;
-        var svgEl = document.getElementById('tree-svg');
-
-        function onMove(e) {
-          var dx = e.clientX - startX, dy = e.clientY - startY;
-          if (!moved && Math.sqrt(dx*dx+dy*dy) > 14) {
-            moved = true;
-            closeMenu();
-            d3.select(el).selectAll('polygon').attr('opacity','0.6');
-          }
-          if (moved) {
-            var tf = d3.zoomTransform(svgEl);
-            var cx = (e.clientX - svgEl.getBoundingClientRect().left - tf.x) / tf.k;
-            var cy = (e.clientY - svgEl.getBoundingClientRect().top  - tf.y) / tf.k;
-            d3.select(el).attr('transform','translate('+cx+','+cy+')');
-          }
-        }
-        function onUp(e) {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup',   onUp);
-          d3.select(el).selectAll('polygon').attr('opacity','1');
-          d3.select(el).attr('transform','translate('+px+','+py+')');
-          if (!moved) {
-            openMenu(mid, px, py);
-          } else {
-            var tf = d3.zoomTransform(svgEl);
-            var fx = (e.clientX - svgEl.getBoundingClientRect().left - tf.x) / tf.k;
-            var fy = (e.clientY - svgEl.getBoundingClientRect().top  - tf.y) / tf.k;
-            onNodeDragEnd(mid, fx, fy);
-          }
-        }
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup',   onUp);
-      });
+      .on('click', function(ev){ ev.stopPropagation(); openMenu(m.id,p.x,p.y); });
 
     // "나" 주황 링
     if (isSelf) {
@@ -862,8 +843,7 @@ function computeChon(targetId, selfId, relations, spouseOf) {
 // ══════════════════════════════════════════════════
 // 줌
 // ══════════════════════════════════════════════════
-// ══════════════════════════════════════════════════
-// 노드 드래그로 순서 변경
+
 // ══════════════════════════════════════════════════
 async function onNodeDragEnd(dragId, dropX, dropY) {
   // 드롭 위치에서 가장 가까운 다른 노드 찾기
@@ -1076,6 +1056,7 @@ function openAddModal(relTargetId, relKey, relInfo) {
   document.getElementById('mm-death').value   = '';
   document.getElementById('mm-note').value    = '';
   document.getElementById('mm-spouse-group').style.display = 'none';
+  document.getElementById('mm-order-group').style.display = 'none';
   document.getElementById('mm-self').checked  = false;
   document.getElementById('mm-btn-del').style.display='none';
   document.getElementById('mm-rel-section').style.display='none';
@@ -1108,6 +1089,7 @@ function openEditModal(id) {
   document.getElementById('mm-self').checked  = (m.id===S.selfId[S.tab]);
   document.getElementById('mm-rel-type').value   = '';
   fillSpouseSelect(id);
+  fillOrderUI(id);
   document.getElementById('mm-rel-target').value = '';
   document.getElementById('mm-rel-label').style.display='none';
   document.getElementById('mm-btn-del').style.display='inline-block';
@@ -1132,6 +1114,82 @@ function openEditModal(id) {
 }
 
 // ✅ Fix #7: 관계 목록 렌더링 + 개별 관계 삭제 버튼
+// 순서(order) UI
+function fillOrderUI(memberId) {
+  var tab     = S.tab;
+  var members = S.data[tab].members;
+  var group   = document.getElementById('mm-order-group');
+  var relations = S.data[tab].relations;
+  var parentIds = relations
+    .filter(function(r){ return r.relationType==='parent-child' && r.person2Id===memberId; })
+    .map(function(r){ return r.person1Id; });
+
+  if (parentIds.length === 0) { group.style.display='none'; return; }
+
+  var siblingIds = new Set();
+  parentIds.forEach(function(pid){
+    relations.filter(function(r){ return r.relationType==='parent-child' && r.person1Id===pid; })
+             .forEach(function(r){ siblingIds.add(r.person2Id); });
+  });
+  siblingIds.add(memberId);
+
+  var siblings = members
+    .filter(function(m){ return siblingIds.has(m.id); })
+    .sort(function(a,b){
+      var oa = (a.order!=null && a.order!=='') ? Number(a.order) : members.indexOf(a)*10;
+      var ob = (b.order!=null && b.order!=='') ? Number(b.order) : members.indexOf(b)*10;
+      return oa - ob;
+    });
+
+  if (siblings.length <= 1) { group.style.display='none'; return; }
+
+  S._orderSiblings = siblings.map(function(m){ return m.id; });
+  var pos = S._orderSiblings.indexOf(memberId);
+  document.getElementById('mm-order-label').textContent = (pos+1)+'번째 / '+siblings.length+'명';
+  group.style.display = 'block';
+}
+
+async function shiftOrder(dir) {
+  var editId   = document.getElementById('mm-id').value;
+  var tab      = S.tab;
+  var members  = S.data[tab].members;
+  var siblings = S._orderSiblings;
+  if (!siblings || !editId) return;
+
+  var pos    = siblings.indexOf(editId);
+  var newPos = pos + dir;
+  if (newPos < 0 || newPos >= siblings.length) return;
+
+  var idA = siblings[pos];
+  var idB = siblings[newPos];
+  var mA  = members.find(function(m){ return m.id===idA; });
+  var mB  = members.find(function(m){ return m.id===idB; });
+
+  var orders = siblings.map(function(id,i){
+    var m = members.find(function(x){ return x.id===id; });
+    return (m && m.order!=null && m.order!=='') ? Number(m.order) : i*10;
+  });
+
+  var oA = orders[pos];
+  var oB = orders[newPos];
+  mA.order = oB;
+  mB.order = oA;
+  siblings[pos]    = idB;
+  siblings[newPos] = idA;
+  S._orderSiblings = siblings;
+
+  var newPosA = siblings.indexOf(editId);
+  document.getElementById('mm-order-label').textContent = (newPosA+1)+'번째 / '+siblings.length+'명';
+
+  try {
+    await api({action:'updateMember', data:{id:idA, order:String(mA.order)}});
+    await api({action:'updateMember', data:{id:idB, order:String(mB.order)}});
+    renderTree();
+  } catch(e) {
+    showToast('저장 실패: '+e.message, 3000);
+  }
+}
+
 // 배우자 드롭다운 변경사항 서버 반영
 async function applySpouseChange(memberId, tab) {
   var spouseGroup = document.getElementById('mm-spouse-group');
