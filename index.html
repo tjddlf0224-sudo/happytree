@@ -227,161 +227,108 @@ body{font-family:'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif
 <div id="toast"></div>
 
 <script>
-// ══════════════════════════════════════════════════
-// 상수
-// ══════════════════════════════════════════════════
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwSgQmPUGCiYuXuIU7ELZEfOrETvKEMueagFccS3XOqcwWIz2R8B6LNO6diMn2xIBB6/exec';
 const TABS = ['친가','외가','처가','처외가'];
 
-// ══════════════════════════════════════════════════
-// 캐시
-// ══════════════════════════════════════════════════
-const CACHE_KEY    = 'happytree_v1_data';
-const CACHE_TS_KEY = 'happytree_v1_ts';
-const CACHE_TTL    = 10 * 60 * 1000;
+// ── 캐시 ──
+const CACHE_KEY='happytree_v1_data', CACHE_TS_KEY='happytree_v1_ts', CACHE_TTL=10*60*1000;
+function saveCache(d){try{localStorage.setItem(CACHE_KEY,JSON.stringify(d));localStorage.setItem(CACHE_TS_KEY,String(Date.now()));}catch(e){}}
+function loadCache(){try{const ts=parseInt(localStorage.getItem(CACHE_TS_KEY)||'0',10),raw=localStorage.getItem(CACHE_KEY);if(!raw||Date.now()-ts>CACHE_TTL)return null;return JSON.parse(raw);}catch(e){return null;}}
+function clearCache(){localStorage.removeItem(CACHE_KEY);localStorage.removeItem(CACHE_TS_KEY);}
+function showCacheBadge(msg){const el=document.getElementById('cache-badge');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600);}
 
-function saveCache(data){ try{ localStorage.setItem(CACHE_KEY,JSON.stringify(data)); localStorage.setItem(CACHE_TS_KEY,String(Date.now())); }catch(e){} }
-function loadCache(){ try{ const ts=parseInt(localStorage.getItem(CACHE_TS_KEY)||'0',10); const raw=localStorage.getItem(CACHE_KEY); if(!raw||Date.now()-ts>CACHE_TTL) return null; return JSON.parse(raw); }catch(e){ return null; } }
-function clearCache(){ localStorage.removeItem(CACHE_KEY); localStorage.removeItem(CACHE_TS_KEY); }
-function showCacheBadge(msg){ const el=document.getElementById('cache-badge'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600); }
+// ── 레이아웃 상수 ──
+function isMobile(){return window.innerWidth<=480;}
+const HR=38,CG=12,HG=52,VG=130,LH=50,RAD_R=80;
 
-// ══════════════════════════════════════════════════
-// 레이아웃 상수
-// ══════════════════════════════════════════════════
-function isMobile(){ return window.innerWidth<=480; }
-const HR=38, CG=12, HG=52, VG=130, LH=50, RAD_R=80;
-
-// ══════════════════════════════════════════════════
-// 전역 상태
-// ══════════════════════════════════════════════════
+// ── 전역 상태 ──
 const mkTab=()=>({members:[],relations:[]});
-const S={
-  tab:'친가',
-  data:Object.fromEntries(TABS.map(t=>[t,mkTab()])),
-  selfId:Object.fromEntries(TABS.map(t=>[t,null])),
-  gender:'male',
-  svg:null, zoom:null,
-};
+const S={tab:'친가',data:Object.fromEntries(TABS.map(t=>[t,mkTab()])),selfId:Object.fromEntries(TABS.map(t=>[t,null])),gender:'male',svg:null,zoom:null};
 
-// ══════════════════════════════════════════════════
-// 초기화
-// ══════════════════════════════════════════════════
-window.addEventListener('DOMContentLoaded', async()=>{
+// ── 초기화 ──
+window.addEventListener('DOMContentLoaded',async()=>{
   initD3();
   const cached=loadCache();
-  if(cached){
-    applyData(cached);
-    hideLoading();
-    showCacheBadge('💾 캐시에서 로드됨');
-    renderTree(); autoFit();
-    loadDataBg();
-  } else {
-    await loadData();
-    hideLoading();
-  }
-  setTimeout(autoFit,100);
-  setTimeout(autoFit,500);
-  setTimeout(autoFit,1000);
+  if(cached){applyData(cached);hideLoading();showCacheBadge('💾 캐시에서 로드됨');renderTree();autoFit();loadDataBg();}
+  else{await loadData();hideLoading();}
+  setTimeout(autoFit,100);setTimeout(autoFit,500);setTimeout(autoFit,1000);
 });
-
 window.addEventListener('orientationchange',()=>setTimeout(autoFit,300));
-window.addEventListener('resize',()=>{ clearTimeout(window._rzt); window._rzt=setTimeout(autoFit,200); });
+window.addEventListener('resize',()=>{clearTimeout(window._rzt);window._rzt=setTimeout(autoFit,200);});
 
 function initD3(){
   S.svg=d3.select('#tree-svg');
-  S.zoom=d3.zoom()
-    .scaleExtent([0.05,5])
-    .filter(ev=>{ if(ev.type==='touchstart') return ev.touches.length>=2; return !ev.button; })
+  S.zoom=d3.zoom().scaleExtent([0.05,5])
+    .filter(ev=>{if(ev.type==='touchstart')return ev.touches.length>=2;return !ev.button;})
     .on('zoom',e=>d3.select('#canvas-g').attr('transform',e.transform));
   S.svg.call(S.zoom);
   S.svg.on('click',()=>closeMenu());
-
-  // 빈 곳 길게 누르기 → 인물 추가
   let pt=null;
-  S.svg.on('touchstart.lp',function(ev){
-    if(ev.touches.length!==1) return;
-    pt=setTimeout(()=>openAddModal(null,null,null),600);
-  });
-  S.svg.on('touchend.lp touchmove.lp',function(){ clearTimeout(pt); pt=null; });
+  S.svg.on('touchstart.lp',function(ev){if(ev.touches.length!==1)return;pt=setTimeout(()=>openAddModal(null,null,null),600);});
+  S.svg.on('touchend.lp touchmove.lp',function(){clearTimeout(pt);pt=null;});
 }
 
 function applyData(res){
-  const allM=res.members||[], allR=res.relations||[];
+  const allM=res.members||[],allR=res.relations||[];
   TABS.forEach(tab=>{
-    S.data[tab].members  =allM.filter(m=>(m.tab||'친가')===tab);
+    S.data[tab].members=allM.filter(m=>(m.tab||'친가')===tab);
     S.data[tab].relations=allR.filter(r=>(r.tab||'친가')===tab);
     const self=S.data[tab].members.find(m=>m.isSelf==='true'||m.isSelf===true);
-    if(self) S.selfId[tab]=self.id;
+    if(self)S.selfId[tab]=self.id;
   });
 }
-
 async function loadData(){
-  try{
-    const res=await api({action:'getAll'});
-    applyData(res); saveCache(res); renderTree(); autoFit();
-  }catch(err){ showToast('데이터 로드 실패: '+(err.message||'서버 오류'),5000); }
+  try{const res=await api({action:'getAll'});applyData(res);saveCache(res);renderTree();autoFit();}
+  catch(err){showToast('데이터 로드 실패: '+(err.message||'서버 오류'),5000);}
 }
-
 async function loadDataBg(){
   try{
     const res=await api({action:'getAll'});
-    const newStr=JSON.stringify(res);
-    const cached=loadCache();
-    const oldStr=cached?JSON.stringify(cached):'';
+    const ns=JSON.stringify(res),os=JSON.stringify(loadCache()||{});
     saveCache(res);
-    if(newStr!==oldStr){ applyData(res); renderTree(); autoFit(); showCacheBadge('🔄 최신 데이터로 갱신됨'); }
+    if(ns!==os){applyData(res);renderTree();autoFit();showCacheBadge('🔄 최신 데이터로 갱신됨');}
   }catch(e){}
 }
 
-// ══════════════════════════════════════════════════
-// 탭
-// ══════════════════════════════════════════════════
 function switchTab(tab,el){
   S.tab=tab;
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
-  closeMenu(); renderTree();
+  closeMenu();renderTree();
 }
 
-// ══════════════════════════════════════════════════
-// 렌더링
-// ══════════════════════════════════════════════════
+// ════════════════════════════════════════
+// 렌더링 (핵심 버그 수정)
+// ════════════════════════════════════════
 function renderTree(){
   const g=d3.select('#canvas-g');
   g.selectAll('*').remove();
   closeMenu();
-
   const {members,relations}=S.data[S.tab];
   const emEl=document.getElementById('empty-state');
-  if(!members.length){ emEl.style.display='flex'; return; }
+  if(!members.length){emEl.style.display='flex';return;}
   emEl.style.display='none';
 
   const mMap=Object.fromEntries(members.map(m=>[m.id,m]));
-
-  // ── 인덱스 구성 (sibling 완전 무시) ──────────────
   const spouseOf={};
-  const kidsOf={};   // parentId → Set<childId>
+  const kidsOf={};
 
+  // sibling 완전 무시, parent-child + spouse만 사용
   relations.forEach(r=>{
-    if(r.relationType==='spouse'){
-      spouseOf[r.person1Id]=r.person2Id;
-      spouseOf[r.person2Id]=r.person1Id;
-    }
-    if(r.relationType==='parent-child'){
-      if(!kidsOf[r.person1Id]) kidsOf[r.person1Id]=new Set();
-      kidsOf[r.person1Id].add(r.person2Id);
-    }
-    // sibling → 완전 무시. parent-child로만 트리 구성
+    if(r.relationType==='spouse'){spouseOf[r.person1Id]=r.person2Id;spouseOf[r.person2Id]=r.person1Id;}
+    if(r.relationType==='parent-child'){if(!kidsOf[r.person1Id])kidsOf[r.person1Id]=new Set();kidsOf[r.person1Id].add(r.person2Id);}
   });
 
-  // ── BFS 세대 배정 ────────────────────────────────
-  // 부모가 없는 노드(= 자식 관계에서 person2로 등장하지 않는 노드)를 루트로
-  const childIds=new Set(
-    relations.filter(r=>r.relationType==='parent-child').map(r=>r.person2Id)
-  );
+  // ── BFS 세대 배정 (핵심 수정) ──────────────────
+  const childIds=new Set(relations.filter(r=>r.relationType==='parent-child').map(r=>r.person2Id));
 
-  // 배우자도 같은 레벨 → 배우자 중 childId가 아닌 쪽도 루트 후보
-  let roots=members.filter(m=>!childIds.has(m.id));
+  // 루트 선정: 본인도 childId 아니고, 배우자도 childId 아닌 사람만 루트
+  let roots=members.filter(m=>{
+    if(childIds.has(m.id)) return false;
+    const sp=spouseOf[m.id];
+    if(sp&&childIds.has(sp)) return false;
+    return true;
+  });
   if(!roots.length) roots=[members[0]];
 
   const levelOf={};
@@ -398,38 +345,43 @@ function renderTree(){
     const q=[[startId,lv]];
     while(q.length){
       const [id,l]=q.shift();
-      if(visited.has(id)) continue;
+      if(visited.has(id))continue;
       visited.add(id);
-      // 더 얕은(작은) 레벨이 이미 배정됐으면 갱신 안 함
-      if(levelOf[id]===undefined || l<levelOf[id]) levelOf[id]=l;
+      // 이미 더 얕은(작은) 레벨이 배정된 경우 갱신 안 함
+      if(levelOf[id]===undefined||l<levelOf[id])levelOf[id]=l;
       const sp=spouseOf[id];
-      if(sp&&!visited.has(sp)){ visited.add(sp); levelOf[sp]=l; }
-      allKids(id).forEach(c=>{ if(!visited.has(c)) q.push([c,l+1]); });
+      if(sp&&!visited.has(sp)){
+        // 배우자: 이미 더 깊은 레벨로 배정돼있으면 건드리지 않음
+        if(levelOf[sp]===undefined||l<levelOf[sp]){
+          visited.add(sp);
+          levelOf[sp]=l;
+        }
+      }
+      allKids(id).forEach(c=>{if(!visited.has(c))q.push([c,l+1]);});
     }
   }
 
-  // 루트 이름순 정렬 후 BFS
   roots.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ko'));
   roots.forEach(r=>bfs(r.id,0));
 
-  // 미방문 노드 처리
+  // 미방문 노드: 부모 레벨+1로
   members.forEach(m=>{
-    if(levelOf[m.id]!==undefined) return;
+    if(levelOf[m.id]!==undefined)return;
     const pr=relations.find(r=>r.relationType==='parent-child'&&r.person2Id===m.id);
     levelOf[m.id]=(pr&&levelOf[pr.person1Id]!==undefined)?levelOf[pr.person1Id]+1:0;
   });
 
   // 레벨 정규화 (최솟값 → 0)
-  const minLv=Math.min(...Object.values(levelOf));
-  if(minLv!==0) members.forEach(m=>{ levelOf[m.id]-=minLv; });
+  const vals=Object.values(levelOf);
+  const minLv=vals.length?Math.min(...vals):0;
+  if(minLv!==0)members.forEach(m=>{levelOf[m.id]-=minLv;});
 
   const levels=[...new Set(Object.values(levelOf))].sort((a,b)=>a-b);
   const maxLv=levels.length?Math.max(...levels):0;
 
-  // ── pair 구성 ─────────────────────────────────────
-  // order 오름차순 → 왼쪽(손윗사람)
+  // ── pair 구성 (order 오름차순 = 왼쪽) ──────────
   const pairDone=new Set();
-  function pairW(p){ return p.isCouple?(HR*4+CG):HR*2; }
+  function pairW(p){return p.isCouple?(HR*4+CG):HR*2;}
   const pairsOf={};
 
   levels.forEach(lv=>{
@@ -441,18 +393,16 @@ function renderTree(){
         return oa!==ob?oa-ob:members.indexOf(a)-members.indexOf(b);
       })
       .map(m=>m.id);
-
     const pairs=[];
     ids.forEach(id=>{
-      if(pairDone.has(id)) return;
+      if(pairDone.has(id))return;
       const sp=spouseOf[id];
       if(sp&&levelOf[sp]===lv&&!pairDone.has(sp)){
-        // 남편 왼쪽, 아내 오른쪽
         const left=(mMap[id]?.gender==='male')?id:sp;
         const right=(left===id)?sp:id;
         pairs.push({left,right,isCouple:true});
-        pairDone.add(id); pairDone.add(sp);
-      } else {
+        pairDone.add(id);pairDone.add(sp);
+      }else{
         pairs.push({left:id,right:null,isCouple:false});
         pairDone.add(id);
       }
@@ -460,173 +410,116 @@ function renderTree(){
     pairsOf[lv]=pairs;
   });
 
-  // ── X 좌표 계산 ───────────────────────────────────
+  // ── X 좌표 계산 ─────────────────────────────────
   const pairCX=new Map();
-
-  // 초기 배치
   levels.forEach(lv=>{
     const ps=pairsOf[lv]||[];
     const tw=ps.reduce((s,p)=>s+pairW(p),0)+HG*Math.max(ps.length-1,0);
     let cx=-tw/2;
-    ps.forEach(p=>{ pairCX.set(p.left,cx+pairW(p)/2); cx+=pairW(p)+HG; });
+    ps.forEach(p=>{pairCX.set(p.left,cx+pairW(p)/2);cx+=pairW(p)+HG;});
   });
-
-  // 아래→위: 부모를 자녀 중앙으로
   for(let lv=maxLv-1;lv>=0;lv--){
     (pairsOf[lv]||[]).forEach(pair=>{
       const kids=directKids(pair.left,pair.isCouple?pair.right:null,lv);
-      if(!kids.length) return;
-      const xs=kids.map(c=>{
-        const cp=(pairsOf[lv+1]||[]).find(p=>p.left===c||p.right===c);
-        return cp?pairCX.get(cp.left):null;
-      }).filter(x=>x!==null);
-      if(xs.length) pairCX.set(pair.left,xs.reduce((a,b)=>a+b,0)/xs.length);
+      if(!kids.length)return;
+      const xs=kids.map(c=>{const cp=(pairsOf[lv+1]||[]).find(p=>p.left===c||p.right===c);return cp?pairCX.get(cp.left):null;}).filter(x=>x!==null);
+      if(xs.length)pairCX.set(pair.left,xs.reduce((a,b)=>a+b,0)/xs.length);
     });
     resolveOverlap(lv);
   }
-  // 위→아래: 간격 재보정
-  for(let lv=1;lv<=maxLv;lv++) resolveOverlap(lv);
+  for(let lv=1;lv<=maxLv;lv++)resolveOverlap(lv);
 
   function resolveOverlap(lv){
     const sorted=[...(pairsOf[lv]||[])].sort((a,b)=>(pairCX.get(a.left)||0)-(pairCX.get(b.left)||0));
     for(let i=1;i<sorted.length;i++){
       const prev=sorted[i-1],cur=sorted[i];
       const minX=(pairCX.get(prev.left)||0)+pairW(prev)/2+HG+pairW(cur)/2;
-      if((pairCX.get(cur.left)||0)<minX) pairCX.set(cur.left,minX);
+      if((pairCX.get(cur.left)||0)<minX)pairCX.set(cur.left,minX);
     }
   }
 
-  // nodePos 확정
   const nodePos={};
-  members.forEach(m=>{ nodePos[m.id]={x:0,y:levelOf[m.id]*(HR*2+LH+VG)}; });
+  members.forEach(m=>{nodePos[m.id]={x:0,y:levelOf[m.id]*(HR*2+LH+VG)};});
   levels.forEach(lv=>{
     (pairsOf[lv]||[]).forEach(pair=>{
       const cx=pairCX.get(pair.left)||0;
-      if(pair.isCouple){
-        nodePos[pair.left].x =cx-HR-CG/2;
-        nodePos[pair.right].x=cx+HR+CG/2;
-      } else {
-        nodePos[pair.left].x=cx;
-      }
+      if(pair.isCouple){nodePos[pair.left].x=cx-HR-CG/2;nodePos[pair.right].x=cx+HR+CG/2;}
+      else{nodePos[pair.left].x=cx;}
     });
   });
 
-  // 헬퍼
   function directKids(repId,sp,lv){
     const s=new Set();
-    [...(kidsOf[repId]||[])].forEach(c=>{ if((levelOf[c]??-1)===lv+1) s.add(c); });
-    if(sp)[...(kidsOf[sp]||[])].forEach(c=>{ if((levelOf[c]??-1)===lv+1) s.add(c); });
+    [...(kidsOf[repId]||[])].forEach(c=>{if((levelOf[c]??-1)===lv+1)s.add(c);});
+    if(sp)[...(kidsOf[sp]||[])].forEach(c=>{if((levelOf[c]??-1)===lv+1)s.add(c);});
     return [...s];
   }
 
-  // ── 링크 그리기 ───────────────────────────────────
+  // ── 링크 ────────────────────────────────────────
   const linkG=g.append('g').attr('class','links');
-
-  // 부부선
   relations.filter(r=>r.relationType==='spouse').forEach(r=>{
     const a=nodePos[r.person1Id],b=nodePos[r.person2Id];
-    if(!a||!b) return;
-    linkG.append('line')
-      .attr('x1',Math.min(a.x,b.x)+HR*.75).attr('y1',a.y)
-      .attr('x2',Math.max(a.x,b.x)-HR*.75).attr('y2',b.y)
-      .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
+    if(!a||!b)return;
+    linkG.append('line').attr('x1',Math.min(a.x,b.x)+HR*.75).attr('y1',a.y).attr('x2',Math.max(a.x,b.x)-HR*.75).attr('y2',b.y).attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
   });
-
-  // 부모→자녀선
   levels.forEach(lv=>{
     (pairsOf[lv]||[]).forEach(pair=>{
       const sp=pair.isCouple?pair.right:null;
       const kids=directKids(pair.left,sp,lv);
-      if(!kids.length) return;
+      if(!kids.length)return;
       const cx=pairCX.get(pair.left)||0;
       const py=nodePos[pair.left].y+HR;
       const midY=py+VG*.4;
-
-      linkG.append('line').attr('x1',cx).attr('y1',py).attr('x2',cx).attr('y2',midY)
-        .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
-
+      linkG.append('line').attr('x1',cx).attr('y1',py).attr('x2',cx).attr('y2',midY).attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
       const kidXs=kids.map(c=>nodePos[c]?.x).filter(x=>x!==undefined);
-      if(kidXs.length>1)
-        linkG.append('line')
-          .attr('x1',Math.min(...kidXs)).attr('y1',midY)
-          .attr('x2',Math.max(...kidXs)).attr('y2',midY)
-          .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
-
+      if(kidXs.length>1)linkG.append('line').attr('x1',Math.min(...kidXs)).attr('y1',midY).attr('x2',Math.max(...kidXs)).attr('y2',midY).attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
       kids.forEach(kid=>{
         const kx=nodePos[kid]?.x,ky=nodePos[kid]?.y-HR;
-        if(kx===undefined) return;
-        linkG.append('line').attr('x1',kx).attr('y1',midY).attr('x2',kx).attr('y2',ky)
-          .attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
+        if(kx===undefined)return;
+        linkG.append('line').attr('x1',kx).attr('y1',midY).attr('x2',kx).attr('y2',ky).attr('stroke','var(--teal)').attr('stroke-width',2).attr('stroke-linecap','round');
       });
     });
   });
 
-  // ── 노드 그리기 ───────────────────────────────────
+  // ── 노드 ────────────────────────────────────────
   const nodeG=g.append('g').attr('class','nodes');
   const selfId=S.selfId[S.tab];
-
   members.forEach(m=>{
-    const p=nodePos[m.id];
-    if(!p) return;
+    const p=nodePos[m.id];if(!p)return;
     const isSelf=m.id===selfId;
     const isDead=(m.isDead==='true'||m.isDead===true);
     const fill=isDead?'var(--dead)':isSelf?'var(--teal)':m.gender==='female'?'var(--female)':'var(--male)';
-
-    const nG=nodeG.append('g')
-      .attr('transform','translate('+p.x+','+p.y+')')
-      .attr('data-id',m.id).style('cursor','pointer')
-      .on('click',function(ev){ ev.stopPropagation(); openMenu(m.id,p.x,p.y); });
-
-    if(isSelf){
-      nG.append('polygon').attr('points',hexPts(HR+5))
-        .attr('fill','none').attr('stroke','var(--self-ring)').attr('stroke-width',3);
-    }
-
-    nG.append('polygon').attr('points',hexPts(HR))
-      .attr('fill',fill).attr('stroke','#fff').attr('stroke-width',2.5);
-
-    if(isDead){
-      nG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-        .attr('fill','rgba(255,255,255,0.75)').attr('font-size','26px').attr('pointer-events','none').text('✝');
-    }
-
+    const nG=nodeG.append('g').attr('transform','translate('+p.x+','+p.y+')').attr('data-id',m.id).style('cursor','pointer')
+      .on('click',function(ev){ev.stopPropagation();openMenu(m.id,p.x,p.y);});
+    if(isSelf)nG.append('polygon').attr('points',hexPts(HR+5)).attr('fill','none').attr('stroke','var(--self-ring)').attr('stroke-width',3);
+    nG.append('polygon').attr('points',hexPts(HR)).attr('fill',fill).attr('stroke','#fff').attr('stroke-width',2.5);
+    if(isDead)nG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle').attr('fill','rgba(255,255,255,0.75)').attr('font-size','26px').attr('pointer-events','none').text('✝');
     if(isSelf){
       const bd=nG.append('g').attr('transform','translate('+(HR-1)+','+(-(HR-1))+')');
       bd.append('circle').attr('r',9).attr('fill','var(--self-ring)').attr('stroke','#fff').attr('stroke-width',1.5);
-      bd.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-        .attr('fill','#fff').attr('font-size','6px').attr('font-weight','700').attr('pointer-events','none').text('ME');
+      bd.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle').attr('fill','#fff').attr('font-size','6px').attr('font-weight','700').attr('pointer-events','none').text('ME');
     }
-
     if(!isSelf&&selfId){
       const chon=computeChon(m.id,selfId,relations,spouseOf);
       if(chon!==null){
         const bd=nG.append('g').attr('transform','translate('+(-(HR-1))+','+(-(HR-1))+')');
         bd.append('circle').attr('r',9).attr('fill','#fff').attr('stroke','var(--teal)').attr('stroke-width',1.5);
-        bd.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-          .attr('fill','var(--teal-dk)').attr('font-size','6.5px').attr('font-weight','700').attr('pointer-events','none')
-          .text(chon===0?'배우자':chon+'촌');
+        bd.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle').attr('fill','var(--teal-dk)').attr('font-size','6.5px').attr('font-weight','700').attr('pointer-events','none').text(chon===0?'배우자':chon+'촌');
       }
     }
-
     if(!isDead){
       if(m.photoFileId){
         const clipId='hclip_'+m.id.replace(/[^a-zA-Z0-9]/g,'_');
         nG.append('defs').append('clipPath').attr('id',clipId).append('polygon').attr('points',hexPts(HR-1));
-        nG.append('image')
-          .attr('href','https://lh3.googleusercontent.com/d/'+m.photoFileId+'=w120')
-          .attr('x',-(HR-1)).attr('y',-(HR-1))
-          .attr('width',(HR-1)*2).attr('height',(HR-1)*2)
-          .attr('preserveAspectRatio','xMidYMid slice')
-          .attr('clip-path','url(#'+clipId+')')
-          .attr('pointer-events','none');
-      } else {
+        nG.append('image').attr('href','https://lh3.googleusercontent.com/d/'+m.photoFileId+'=w120').attr('x',-(HR-1)).attr('y',-(HR-1)).attr('width',(HR-1)*2).attr('height',(HR-1)*2).attr('preserveAspectRatio','xMidYMid slice').attr('clip-path','url(#'+clipId+')').attr('pointer-events','none');
+      }else{
         const iconG=nG.append('g').attr('pointer-events','none').attr('transform','translate(0,1)').attr('opacity','0.88');
         if(m.gender==='female'){
           iconG.append('circle').attr('cx',0).attr('cy',-11).attr('r',7).attr('fill','rgba(255,255,255,0.92)');
           iconG.append('rect').attr('x',-2.5).attr('y',-4.5).attr('width',5).attr('height',4).attr('rx',1).attr('fill','rgba(255,255,255,0.92)');
           iconG.append('path').attr('d','M -9 14 Q -8 -1 0 -1 Q 8 -1 9 14 Z').attr('fill','rgba(255,255,255,0.92)');
           iconG.append('rect').attr('x',-6).attr('y',-1).attr('width',12).attr('height',3.5).attr('rx',1.5).attr('fill','rgba(255,255,255,0.7)');
-        } else {
+        }else{
           iconG.append('circle').attr('cx',0).attr('cy',-11).attr('r',7).attr('fill','rgba(255,255,255,0.92)');
           iconG.append('rect').attr('x',-2.5).attr('y',-4.5).attr('width',5).attr('height',3.5).attr('rx',1).attr('fill','rgba(255,255,255,0.92)');
           iconG.append('path').attr('d','M -10 14 L -8 -1 L 8 -1 L 10 14 Z').attr('fill','rgba(255,255,255,0.92)');
@@ -634,191 +527,93 @@ function renderTree(){
         }
       }
     }
-
-    nG.append('text').attr('text-anchor','middle').attr('y',HR+18)
-      .attr('fill',isDead?'#757575':'#222').attr('font-size','13px').attr('font-weight','700')
-      .attr('pointer-events','none').text(clip(m.name||'(미입력)',6));
-
+    nG.append('text').attr('text-anchor','middle').attr('y',HR+18).attr('fill',isDead?'#757575':'#222').attr('font-size','13px').attr('font-weight','700').attr('pointer-events','none').text(clip(m.name||'(미입력)',6));
     const sub=buildSub(m);
-    if(sub){
-      nG.append('text').attr('text-anchor','middle').attr('y',HR+33)
-        .attr('fill',isDead?'#9e9e9e':'#666').attr('font-size','11px').attr('pointer-events','none').text(sub);
-    }
+    if(sub)nG.append('text').attr('text-anchor','middle').attr('y',HR+33).attr('fill',isDead?'#9e9e9e':'#666').attr('font-size','11px').attr('pointer-events','none').text(sub);
   });
-
   autoFit();
 }
 
-// ══════════════════════════════════════════════════
-// 유틸
-// ══════════════════════════════════════════════════
-function hexPts(r){
-  return Array.from({length:6},(_,i)=>{
-    const a=Math.PI/180*(60*i-30);
-    return (r*Math.cos(a))+','+(r*Math.sin(a));
-  }).join(' ');
-}
-function clip(s,n){ return s.length>n?s.slice(0,n-1)+'…':s; }
-function koreanAge(by,base){ const b=parseInt(by,10); if(!b||isNaN(b)) return null; return (base||new Date().getFullYear())-b+1; }
+// ── 유틸 ──
+function hexPts(r){return Array.from({length:6},(_,i)=>{const a=Math.PI/180*(60*i-30);return(r*Math.cos(a))+','+(r*Math.sin(a));}).join(' ');}
+function clip(s,n){return s.length>n?s.slice(0,n-1)+'…':s;}
+function koreanAge(by,base){const b=parseInt(by,10);if(!b||isNaN(b))return null;return(base||new Date().getFullYear())-b+1;}
 function buildSub(m){
-  const p=[];
-  if(m.note) p.push(m.note);
+  const p=[];if(m.note)p.push(m.note);
   const isDead=(m.isDead==='true'||m.isDead===true);
-  if(m.birthYear){
-    if(isDead){ p.push('고인'); }
-    else{ const age=koreanAge(m.birthYear,new Date().getFullYear()); if(age!==null&&age>0) p.push(age+'세'); }
-  }
-  const s=p.join(' · ');
-  return s.length>13?s.slice(0,12)+'…':s;
+  if(m.birthYear){if(isDead)p.push('고인');else{const age=koreanAge(m.birthYear,new Date().getFullYear());if(age!==null&&age>0)p.push(age+'세');}}
+  const s=p.join(' · ');return s.length>13?s.slice(0,12)+'…':s;
 }
 function computeChon(targetId,selfId,relations,spouseOf){
-  if(!selfId||targetId===selfId) return null;
-  if(spouseOf[selfId]===targetId) return 0;
+  if(!selfId||targetId===selfId)return null;
+  if(spouseOf[selfId]===targetId)return 0;
   const adj={};
-  relations.forEach(r=>{
-    if(r.relationType==='parent-child'){
-      if(!adj[r.person1Id]) adj[r.person1Id]=[];
-      if(!adj[r.person2Id]) adj[r.person2Id]=[];
-      adj[r.person1Id].push(r.person2Id);
-      adj[r.person2Id].push(r.person1Id);
-    }
-  });
-  const starts=[selfId];
-  if(spouseOf[selfId]) starts.push(spouseOf[selfId]);
-  const dist={};
-  starts.forEach(s=>{ dist[s]=0; });
-  const q=[...starts];
-  while(q.length){
-    const cur=q.shift();
-    (adj[cur]||[]).forEach(nb=>{ if(dist[nb]===undefined){ dist[nb]=dist[cur]+1; q.push(nb); } });
-  }
-  let d=dist[targetId];
-  if(d===undefined&&spouseOf[targetId]) d=dist[spouseOf[targetId]];
-  if(d===undefined) return null;
-  return d;
+  relations.forEach(r=>{if(r.relationType==='parent-child'){if(!adj[r.person1Id])adj[r.person1Id]=[];if(!adj[r.person2Id])adj[r.person2Id]=[];adj[r.person1Id].push(r.person2Id);adj[r.person2Id].push(r.person1Id);}});
+  const starts=[selfId];if(spouseOf[selfId])starts.push(spouseOf[selfId]);
+  const dist={};starts.forEach(s=>{dist[s]=0;});const q=[...starts];
+  while(q.length){const cur=q.shift();(adj[cur]||[]).forEach(nb=>{if(dist[nb]===undefined){dist[nb]=dist[cur]+1;q.push(nb);}});}
+  let d=dist[targetId];if(d===undefined&&spouseOf[targetId])d=dist[spouseOf[targetId]];
+  if(d===undefined)return null;return d;
 }
 
-// ══════════════════════════════════════════════════
-// 줌
-// ══════════════════════════════════════════════════
+// ── 줌 ──
 function autoFit(){
   function tryFit(n){
-    const g=document.getElementById('canvas-g');
-    const mainEl=document.getElementById('main');
-    const sw=mainEl?mainEl.clientWidth:window.innerWidth;
-    const sh=mainEl?mainEl.clientHeight:window.innerHeight-160;
-    if((sw<10||sh<10)&&n>0){ setTimeout(()=>tryFit(n-1),150); return; }
-    const bb=g.getBBox();
-    if(!bb.width||!bb.height){ if(n>0) setTimeout(()=>tryFit(n-1),150); return; }
+    const g=document.getElementById('canvas-g'),mainEl=document.getElementById('main');
+    const sw=mainEl?mainEl.clientWidth:window.innerWidth,sh=mainEl?mainEl.clientHeight:window.innerHeight-160;
+    if((sw<10||sh<10)&&n>0){setTimeout(()=>tryFit(n-1),150);return;}
+    const bb=g.getBBox();if(!bb.width||!bb.height){if(n>0)setTimeout(()=>tryFit(n-1),150);return;}
     const nc=S.data[S.tab].members.length;
-    const pad=nc<=2?120:nc<=5?80:60;
-    const maxSc=nc<=1?2.5:nc<=3?2.0:nc<=6?1.5:1.2;
-    let sc=Math.min((sw-pad)/bb.width,(sh-pad)/bb.height,maxSc);
-    if(sc<=0||!isFinite(sc)) sc=1.0;
-    const tx=sw/2-sc*(bb.x+bb.width/2);
-    const ty=sh/2-sc*(bb.y+bb.height/2);
+    const pad=nc<=2?120:nc<=5?80:60,maxSc=nc<=1?2.5:nc<=3?2.0:nc<=6?1.5:1.2;
+    let sc=Math.min((sw-pad)/bb.width,(sh-pad)/bb.height,maxSc);if(sc<=0||!isFinite(sc))sc=1.0;
+    const tx=sw/2-sc*(bb.x+bb.width/2),ty=sh/2-sc*(bb.y+bb.height/2);
     S.svg.call(S.zoom.transform,d3.zoomIdentity.translate(tx,ty).scale(sc));
   }
   requestAnimationFrame(()=>tryFit(8));
 }
-function resetZoom(){ autoFit(); }
+function resetZoom(){autoFit();}
 
-// ══════════════════════════════════════════════════
-// 방사형 메뉴
-// ══════════════════════════════════════════════════
-const MENU_ITEMS=[
-  {key:'spouse', label:'배우자',angle:0,  color:'#e74c3c'},
-  {key:'child',  label:'자녀',  angle:60, color:'#2bbcd4'},
-  {key:'sibling',label:'형제',  angle:120,color:'#9b59b6'},
-  {key:'parent', label:'부모',  angle:180,color:'#3498db'},
-  {key:'delete', label:'삭제',  angle:240,color:'#c0392b'},
-];
+// ── 방사형 메뉴 ──
+const MENU_ITEMS=[{key:'spouse',label:'배우자',angle:0,color:'#e74c3c'},{key:'child',label:'자녀',angle:60,color:'#2bbcd4'},{key:'sibling',label:'형제',angle:120,color:'#9b59b6'},{key:'parent',label:'부모',angle:180,color:'#3498db'},{key:'delete',label:'삭제',angle:240,color:'#c0392b'}];
 
 function openMenu(id,nx,ny){
   closeMenu();
-  const m=S.data[S.tab].members.find(x=>x.id===id);
-  if(!m) return;
-  const svgEl=document.getElementById('tree-svg');
-  const tf=d3.zoomTransform(svgEl);
-  const sw=svgEl.clientWidth||window.innerWidth;
-  const sh=svgEl.clientHeight||window.innerHeight-160;
+  const m=S.data[S.tab].members.find(x=>x.id===id);if(!m)return;
+  const svgEl=document.getElementById('tree-svg'),tf=d3.zoomTransform(svgEl);
+  const sw=svgEl.clientWidth||window.innerWidth,sh=svgEl.clientHeight||window.innerHeight-160;
   const mr=RAD_R+28+20;
-  let sx=Math.max(mr,Math.min(sw-mr,tf.applyX(nx)));
-  let sy=Math.max(mr,Math.min(sh-mr,tf.applyY(ny)));
-  const ax=(sx-tf.x)/tf.k, ay=(sy-tf.y)/tf.k;
-
-  const menuG=d3.select('#canvas-g').append('g')
-    .attr('class','radial-menu').attr('transform','translate('+ax+','+ay+')');
-  menuG.append('circle').attr('r',RAD_R+38).attr('fill','rgba(0,0,0,.22)')
-    .on('click',e=>{ e.stopPropagation(); closeMenu(); });
-
+  let sx=Math.max(mr,Math.min(sw-mr,tf.applyX(nx))),sy=Math.max(mr,Math.min(sh-mr,tf.applyY(ny)));
+  const ax=(sx-tf.x)/tf.k,ay=(sy-tf.y)/tf.k;
+  const menuG=d3.select('#canvas-g').append('g').attr('class','radial-menu').attr('transform','translate('+ax+','+ay+')');
+  menuG.append('circle').attr('r',RAD_R+38).attr('fill','rgba(0,0,0,.22)').on('click',e=>{e.stopPropagation();closeMenu();});
   MENU_ITEMS.forEach(item=>{
-    const rad=item.angle*Math.PI/180;
-    const ix=RAD_R*Math.cos(rad), iy=RAD_R*Math.sin(rad);
-    const iG=menuG.append('g').attr('transform','translate('+ix+','+iy+')')
-      .style('cursor','pointer')
-      .on('click',e=>{ e.stopPropagation(); closeMenu(); handleMenu(item.key,id); });
+    const rad=item.angle*Math.PI/180,ix=RAD_R*Math.cos(rad),iy=RAD_R*Math.sin(rad);
+    const iG=menuG.append('g').attr('transform','translate('+ix+','+iy+')').style('cursor','pointer').on('click',e=>{e.stopPropagation();closeMenu();handleMenu(item.key,id);});
     const r=isMobile()?28:22;
     const circ=iG.append('circle').attr('r',r).attr('fill',item.color).attr('stroke','#fff').attr('stroke-width',2);
     iG.on('mouseover',()=>circ.attr('r',r+3)).on('mouseout',()=>circ.attr('r',r));
-    iG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-      .attr('fill','#fff').attr('font-size',isMobile()?'12px':'10px').attr('font-weight','700')
-      .attr('pointer-events','none').text(item.label);
+    iG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle').attr('fill','#fff').attr('font-size',isMobile()?'12px':'10px').attr('font-weight','700').attr('pointer-events','none').text(item.label);
   });
-
-  menuG.append('circle').attr('r',HR+1).attr('fill','#27ae60')
-    .attr('stroke','#fff').attr('stroke-width',2.5).style('cursor','pointer')
-    .on('click',function(e){ e.stopPropagation(); closeMenu(); handleMenu('edit',id); });
-  menuG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle')
-    .attr('fill','#fff').attr('font-size','13px').attr('font-weight','700')
-    .attr('pointer-events','none').text('편집');
+  menuG.append('circle').attr('r',HR+1).attr('fill','#27ae60').attr('stroke','#fff').attr('stroke-width',2.5).style('cursor','pointer').on('click',function(e){e.stopPropagation();closeMenu();handleMenu('edit',id);});
+  menuG.append('text').attr('text-anchor','middle').attr('dominant-baseline','middle').attr('fill','#fff').attr('font-size','13px').attr('font-weight','700').attr('pointer-events','none').text('편집');
 }
-
-function closeMenu(){ d3.select('#canvas-g').selectAll('.radial-menu').remove(); }
+function closeMenu(){d3.select('#canvas-g').selectAll('.radial-menu').remove();}
 
 function handleMenu(key,targetId){
-  if(key==='edit'){ openEditModal(targetId); return; }
-  if(key==='delete'){
-    const m=S.data[S.tab].members.find(x=>x.id===targetId);
-    if(m&&confirm(m.name+'을 삭제할까요?\n연결된 관계도 모두 삭제됩니다.')) doDeleteMember(targetId);
-    return;
-  }
-  if(key==='spouse'){
-    const {relations}=S.data[S.tab];
-    if(relations.some(r=>r.relationType==='spouse'&&(r.person1Id===targetId||r.person2Id===targetId))){
-      showToast('이미 배우자가 연결되어 있어요.',3500); return;
-    }
-  }
-  if(key==='parent'){
-    const {relations}=S.data[S.tab];
-    if(relations.some(r=>r.relationType==='parent-child'&&r.person2Id===targetId)){
-      showToast('이미 부모가 연결되어 있어요.',3500); return;
-    }
-  }
-  const INFO={
-    parent: {label:'부모 추가', defaultGender:'male'},
-    spouse: {label:'배우자 추가',defaultGender:'female'},
-    child:  {label:'자녀 추가', defaultGender:'male'},
-    sibling:{label:'형제 추가', defaultGender:'male'},
-  };
+  if(key==='edit'){openEditModal(targetId);return;}
+  if(key==='delete'){const m=S.data[S.tab].members.find(x=>x.id===targetId);if(m&&confirm(m.name+'을 삭제할까요?\n연결된 관계도 모두 삭제됩니다.'))doDeleteMember(targetId);return;}
+  if(key==='spouse'){const{relations}=S.data[S.tab];if(relations.some(r=>r.relationType==='spouse'&&(r.person1Id===targetId||r.person2Id===targetId))){showToast('이미 배우자가 연결되어 있어요.',3500);return;}}
+  if(key==='parent'){const{relations}=S.data[S.tab];if(relations.some(r=>r.relationType==='parent-child'&&r.person2Id===targetId)){showToast('이미 부모가 연결되어 있어요.',3500);return;}}
+  const INFO={parent:{label:'부모 추가',defaultGender:'male'},spouse:{label:'배우자 추가',defaultGender:'female'},child:{label:'자녀 추가',defaultGender:'male'},sibling:{label:'형제 추가',defaultGender:'male'}};
   openAddModal(targetId,key,INFO[key]);
 }
 
-// ══════════════════════════════════════════════════
-// 인물 모달
-// ══════════════════════════════════════════════════
-function selGender(g){
-  S.gender=g;
-  document.getElementById('gbtn-m').className='gender-btn'+(g==='male'?' sel-m':'');
-  document.getElementById('gbtn-f').className='gender-btn'+(g==='female'?' sel-f':'');
-}
+// ── 모달 ──
+function selGender(g){S.gender=g;document.getElementById('gbtn-m').className='gender-btn'+(g==='male'?' sel-m':'');document.getElementById('gbtn-f').className='gender-btn'+(g==='female'?' sel-f':'');}
 
 function openAddModal(relTargetId,relKey,relInfo){
   document.getElementById('mm-title').textContent=relInfo?relInfo.label:'인물 추가';
-  document.getElementById('mm-id').value='';
-  document.getElementById('mm-name').value='';
-  document.getElementById('mm-birth').value='';
-  document.getElementById('mm-note').value='';
+  ['mm-id','mm-name','mm-birth','mm-note'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('mm-dead').checked=false;
   document.getElementById('mm-self').checked=false;
   document.getElementById('mm-spouse-group').style.display='none';
@@ -828,11 +623,8 @@ function openAddModal(relTargetId,relKey,relInfo){
   document.getElementById('mm-rel-target').value=relTargetId||'';
   document.getElementById('mm-btn-del').classList.remove('visible');
   const rl=document.getElementById('mm-rel-label');
-  if(relInfo&&relTargetId){
-    const t=S.data[S.tab].members.find(m=>m.id===relTargetId);
-    rl.textContent=(t?t.name:'?')+'의 '+relInfo.label;
-    rl.style.display='block';
-  } else { rl.style.display='none'; }
+  if(relInfo&&relTargetId){const t=S.data[S.tab].members.find(m=>m.id===relTargetId);rl.textContent=(t?t.name:'?')+'의 '+relInfo.label;rl.style.display='block';}
+  else rl.style.display='none';
   selGender(relInfo?.defaultGender||'male');
   resetPhotoUI();
   document.getElementById('member-modal').classList.add('open');
@@ -840,8 +632,7 @@ function openAddModal(relTargetId,relKey,relInfo){
 }
 
 function openEditModal(id){
-  const m=S.data[S.tab].members.find(x=>x.id===id);
-  if(!m) return;
+  const m=S.data[S.tab].members.find(x=>x.id===id);if(!m)return;
   document.getElementById('mm-title').textContent='인물 수정';
   document.getElementById('mm-id').value=m.id;
   document.getElementById('mm-name').value=m.name||'';
@@ -853,42 +644,26 @@ function openEditModal(id){
   document.getElementById('mm-rel-target').value='';
   document.getElementById('mm-rel-label').style.display='none';
   document.getElementById('mm-btn-del').classList.add('visible');
-  fillSpouseSelect(id);
-  fillOrderUI(id);
-  selGender(m.gender||'male');
+  fillSpouseSelect(id);fillOrderUI(id);selGender(m.gender||'male');
   resetPhotoUI();
-  if(m.photoFileId){
-    S._photoFileId=m.photoFileId;
-    document.getElementById('mm-photo-thumb').src='https://lh3.googleusercontent.com/d/'+m.photoFileId+'=w200';
-    document.getElementById('mm-photo-thumb').style.display='block';
-    document.getElementById('mm-photo-icon').style.display='none';
-    document.getElementById('mm-photo-main').textContent='사진 변경 / 삭제';
-    document.getElementById('mm-photo-clear').style.display='block';
-  }
+  if(m.photoFileId){S._photoFileId=m.photoFileId;document.getElementById('mm-photo-thumb').src='https://lh3.googleusercontent.com/d/'+m.photoFileId+'=w200';document.getElementById('mm-photo-thumb').style.display='block';document.getElementById('mm-photo-icon').style.display='none';document.getElementById('mm-photo-main').textContent='사진 변경 / 삭제';document.getElementById('mm-photo-clear').style.display='block';}
   renderRelSection(id);
   document.getElementById('member-modal').classList.add('open');
 }
 
 function fillOrderUI(memberId){
-  const tab=S.tab, members=S.data[tab].members;
-  const group=document.getElementById('mm-order-group');
-  const relations=S.data[tab].relations;
-  const parentIds=relations
-    .filter(r=>r.relationType==='parent-child'&&r.person2Id===memberId)
-    .map(r=>r.person1Id);
-  if(!parentIds.length){ group.style.display='none'; return; }
+  const tab=S.tab,members=S.data[tab].members,group=document.getElementById('mm-order-group'),relations=S.data[tab].relations;
+  const parentIds=relations.filter(r=>r.relationType==='parent-child'&&r.person2Id===memberId).map(r=>r.person1Id);
+  if(!parentIds.length){group.style.display='none';return;}
   const siblingIds=new Set();
-  parentIds.forEach(pid=>{
-    relations.filter(r=>r.relationType==='parent-child'&&r.person1Id===pid)
-             .forEach(r=>siblingIds.add(r.person2Id));
-  });
+  parentIds.forEach(pid=>relations.filter(r=>r.relationType==='parent-child'&&r.person1Id===pid).forEach(r=>siblingIds.add(r.person2Id)));
   siblingIds.add(memberId);
   const siblings=members.filter(m=>siblingIds.has(m.id)).sort((a,b)=>{
     const oa=(a.order!=null&&a.order!=='')?Number(a.order):members.indexOf(a)*10;
     const ob=(b.order!=null&&b.order!=='')?Number(b.order):members.indexOf(b)*10;
     return oa-ob;
   });
-  if(siblings.length<=1){ group.style.display='none'; return; }
+  if(siblings.length<=1){group.style.display='none';return;}
   S._orderSiblings=siblings.map(m=>m.id);
   const pos=S._orderSiblings.indexOf(memberId);
   document.getElementById('mm-order-label').textContent=(pos+1)+'번째 / '+siblings.length+'명';
@@ -896,238 +671,162 @@ function fillOrderUI(memberId){
 }
 
 async function shiftOrder(dir){
-  const editId=document.getElementById('mm-id').value;
-  const tab=S.tab, members=S.data[tab].members;
-  const siblings=S._orderSiblings;
-  if(!siblings||!editId) return;
-  const pos=siblings.indexOf(editId), newPos=pos+dir;
-  if(newPos<0||newPos>=siblings.length) return;
-  const idA=siblings[pos], idB=siblings[newPos];
-  const mA=members.find(m=>m.id===idA), mB=members.find(m=>m.id===idB);
-  const orders=siblings.map((id,i)=>{ const m=members.find(x=>x.id===id); return(m&&m.order!=null&&m.order!=='')?Number(m.order):i*10; });
-  const oA=orders[pos], oB=orders[newPos];
-  mA.order=oB; mB.order=oA;
-  siblings[pos]=idB; siblings[newPos]=idA;
-  S._orderSiblings=siblings;
+  const editId=document.getElementById('mm-id').value,tab=S.tab,members=S.data[tab].members,siblings=S._orderSiblings;
+  if(!siblings||!editId)return;
+  const pos=siblings.indexOf(editId),newPos=pos+dir;
+  if(newPos<0||newPos>=siblings.length)return;
+  const idA=siblings[pos],idB=siblings[newPos];
+  const mA=members.find(m=>m.id===idA),mB=members.find(m=>m.id===idB);
+  const orders=siblings.map((id,i)=>{const m=members.find(x=>x.id===id);return(m&&m.order!=null&&m.order!=='')?Number(m.order):i*10;});
+  mA.order=orders[newPos];mB.order=orders[pos];
+  siblings[pos]=idB;siblings[newPos]=idA;S._orderSiblings=siblings;
   document.getElementById('mm-order-label').textContent=(siblings.indexOf(editId)+1)+'번째 / '+siblings.length+'명';
-  try{
-    await api({action:'updateMember',data:{id:idA,order:String(mA.order)}});
-    await api({action:'updateMember',data:{id:idB,order:String(mB.order)}});
-    clearCache(); renderTree();
-  }catch(e){ showToast('저장 실패: '+e.message,3000); }
+  try{await api({action:'updateMember',data:{id:idA,order:String(mA.order)}});await api({action:'updateMember',data:{id:idB,order:String(mB.order)}});clearCache();renderTree();}
+  catch(e){showToast('저장 실패: '+e.message,3000);}
 }
 
 async function applySpouseChange(memberId,tab){
-  const sg=document.getElementById('mm-spouse-group');
-  if(sg.style.display==='none') return;
-  const newSpouseId=document.getElementById('mm-spouse-select').value;
-  const relations=S.data[tab].relations;
+  const sg=document.getElementById('mm-spouse-group');if(sg.style.display==='none')return;
+  const newSpouseId=document.getElementById('mm-spouse-select').value,relations=S.data[tab].relations;
   const existingRel=relations.find(r=>r.relationType==='spouse'&&(r.person1Id===memberId||r.person2Id===memberId));
   const currentSpouseId=existingRel?(existingRel.person1Id===memberId?existingRel.person2Id:existingRel.person1Id):'';
-  if(newSpouseId===currentSpouseId) return;
-  if(existingRel){
-    await api({action:'deleteRelation',id:existingRel.id});
-    S.data[tab].relations=relations.filter(r=>r.id!==existingRel.id);
-  }
-  if(newSpouseId){
-    const res=await api({action:'addRelation',data:{person1Id:memberId,person2Id:newSpouseId,relationType:'spouse',tab}});
-    S.data[tab].relations.push({id:res.id,person1Id:memberId,person2Id:newSpouseId,relationType:'spouse',tab});
-  }
+  if(newSpouseId===currentSpouseId)return;
+  if(existingRel){await api({action:'deleteRelation',id:existingRel.id});S.data[tab].relations=relations.filter(r=>r.id!==existingRel.id);}
+  if(newSpouseId){const res=await api({action:'addRelation',data:{person1Id:memberId,person2Id:newSpouseId,relationType:'spouse',tab}});S.data[tab].relations.push({id:res.id,person1Id:memberId,person2Id:newSpouseId,relationType:'spouse',tab});}
 }
 
 function fillSpouseSelect(memberId){
-  const group=document.getElementById('mm-spouse-group');
-  const sel=document.getElementById('mm-spouse-select');
-  const tab=S.tab, members=S.data[tab].members, relations=S.data[tab].relations;
+  const group=document.getElementById('mm-spouse-group'),sel=document.getElementById('mm-spouse-select');
+  const tab=S.tab,members=S.data[tab].members,relations=S.data[tab].relations;
   const spouseRel=relations.find(r=>r.relationType==='spouse'&&(r.person1Id===memberId||r.person2Id===memberId));
   const currentSpouseId=spouseRel?(spouseRel.person1Id===memberId?spouseRel.person2Id:spouseRel.person1Id):'';
-  const usedAsSpouse={};
-  relations.forEach(r=>{ if(r.relationType==='spouse'){ usedAsSpouse[r.person1Id]=true; usedAsSpouse[r.person2Id]=true; } });
+  const usedAsSpouse={};relations.forEach(r=>{if(r.relationType==='spouse'){usedAsSpouse[r.person1Id]=true;usedAsSpouse[r.person2Id]=true;}});
   sel.innerHTML='<option value="">— 없음 —</option>';
   members.forEach(m=>{
-    if(m.id===memberId) return;
-    if(usedAsSpouse[m.id]&&m.id!==currentSpouseId) return;
-    const opt=document.createElement('option');
-    opt.value=m.id; opt.textContent=m.name||'(이름없음)';
-    if(m.id===currentSpouseId) opt.selected=true;
-    sel.appendChild(opt);
+    if(m.id===memberId)return;if(usedAsSpouse[m.id]&&m.id!==currentSpouseId)return;
+    const opt=document.createElement('option');opt.value=m.id;opt.textContent=m.name||'(이름없음)';if(m.id===currentSpouseId)opt.selected=true;sel.appendChild(opt);
   });
   group.style.display='block';
 }
 
 function renderRelSection(memberId){
-  const {members,relations}=S.data[S.tab];
-  const mMap=Object.fromEntries(members.map(m=>[m.id,m]));
+  const{members,relations}=S.data[S.tab],mMap=Object.fromEntries(members.map(m=>[m.id,m]));
   const myRels=relations.filter(r=>r.person1Id===memberId||r.person2Id===memberId);
-  const section=document.getElementById('mm-rel-section');
-  const listEl=document.getElementById('mm-rel-list');
-  if(!myRels.length){ section.style.display='none'; return; }
+  const section=document.getElementById('mm-rel-section'),listEl=document.getElementById('mm-rel-list');
+  if(!myRels.length){section.style.display='none';return;}
   section.style.display='block';
-  listEl.onclick=e=>{ const btn=e.target.closest('[data-relid]'); if(btn) unlinkRelation(btn.dataset.relid); };
+  listEl.onclick=e=>{const btn=e.target.closest('[data-relid]');if(btn)unlinkRelation(btn.dataset.relid);};
   listEl.innerHTML=myRels.map(r=>{
-    const other=r.person1Id===memberId?r.person2Id:r.person1Id;
-    const otherM=mMap[other];
+    const other=r.person1Id===memberId?r.person2Id:r.person1Id,otherM=mMap[other];
     const typeLabel={'spouse':'배우자','parent-child':r.person1Id===memberId?'부모→자녀':'자녀←부모','sibling':'형제'}[r.relationType]||r.relationType;
     return '<div class="rel-list-item"><span class="rel-tag">'+typeLabel+'</span><span>'+(otherM?.name||'(알 수 없음)')+'</span><button class="btn-unlink" data-relid="'+r.id+'" title="관계 삭제">✕</button></div>';
   }).join('');
 }
 
 async function unlinkRelation(relId){
-  if(!confirm('이 관계를 삭제할까요?')) return;
-  const tab=S.tab;
-  showLoading();
-  try{ await api({action:'deleteRelation',id:relId}); }catch(_){}
+  if(!confirm('이 관계를 삭제할까요?'))return;
+  const tab=S.tab;showLoading();
+  try{await api({action:'deleteRelation',id:relId});}catch(_){}
   S.data[tab].relations=S.data[tab].relations.filter(r=>r.id!==relId);
   clearCache();
-  const editId=document.getElementById('mm-id').value;
-  if(editId) renderRelSection(editId);
-  hideLoading(); renderTree(); showToast('관계를 삭제했습니다.');
+  const editId=document.getElementById('mm-id').value;if(editId)renderRelSection(editId);
+  hideLoading();renderTree();showToast('관계를 삭제했습니다.');
 }
 
-function openSelfModal(){
-  const sid=S.selfId[S.tab];
-  if(sid) openEditModal(sid);
-  else showToast('"나"로 설정된 인물이 없어요.',3000);
-}
-function closeMemberModal(){ document.getElementById('member-modal').classList.remove('open'); }
+function openSelfModal(){const sid=S.selfId[S.tab];if(sid)openEditModal(sid);else showToast('"나"로 설정된 인물이 없어요.',3000);}
+function closeMemberModal(){document.getElementById('member-modal').classList.remove('open');}
 
 async function saveMember(){
   const name=document.getElementById('mm-name').value.trim();
-  if(!name){ showToast('이름을 입력해 주세요.'); return; }
-  const birthVal=parseInt(document.getElementById('mm-birth').value,10);
-  const thisYear=new Date().getFullYear();
-  if(document.getElementById('mm-birth').value&&(isNaN(birthVal)||birthVal<1||birthVal>thisYear)){
-    showToast('출생년도는 1~'+thisYear+' 사이로 입력해 주세요.'); return;
-  }
-  const editId=document.getElementById('mm-id').value;
-  const relKey=document.getElementById('mm-rel-type').value;
-  const relTarget=document.getElementById('mm-rel-target').value;
-  const isSelf=document.getElementById('mm-self').checked;
-  const isDead=document.getElementById('mm-dead').checked;
-  const tab=S.tab;
-
-  if(isSelf&&S.selfId[tab]&&S.selfId[tab]!==editId){
-    const om=S.data[tab].members.find(m=>m.id===S.selfId[tab]);
-    if(om){ om.isSelf='false'; try{ await api({action:'updateMember',data:{...om}}); }catch(_){} }
-  }
-
+  if(!name){showToast('이름을 입력해 주세요.');return;}
+  const birthVal=parseInt(document.getElementById('mm-birth').value,10),thisYear=new Date().getFullYear();
+  if(document.getElementById('mm-birth').value&&(isNaN(birthVal)||birthVal<1||birthVal>thisYear)){showToast('출생년도는 1~'+thisYear+' 사이로 입력해 주세요.');return;}
+  const editId=document.getElementById('mm-id').value,relKey=document.getElementById('mm-rel-type').value,relTarget=document.getElementById('mm-rel-target').value;
+  const isSelf=document.getElementById('mm-self').checked,isDead=document.getElementById('mm-dead').checked,tab=S.tab;
+  if(isSelf&&S.selfId[tab]&&S.selfId[tab]!==editId){const om=S.data[tab].members.find(m=>m.id===S.selfId[tab]);if(om){om.isSelf='false';try{await api({action:'updateMember',data:{...om}});}catch(_){}}}
   let photoFileId=S._photoFileId||null;
   if(S._pendingPhotoB64){
-    showLoading(); closeMemberModal();
-    try{
-      const upRes=await api({action:'uploadPhoto',base64:S._pendingPhotoB64,mime:S._pendingPhotoMime||'image/jpeg',name:(name||'photo')+'_'+Date.now()});
-      photoFileId=upRes.fileId;
-      if(S._photoFileId&&S._photoFileId!==photoFileId){ try{ await api({action:'deletePhoto',fileId:S._photoFileId}); }catch(_){} }
-    }catch(e){ showToast('사진 업로드 실패: '+e.message,3000); hideLoading(); return; }
-  } else if(S._photoRemoved&&S._photoFileId){
-    try{ await api({action:'deletePhoto',fileId:S._photoFileId}); }catch(_){}
-    photoFileId=null;
-  }
-
+    showLoading();closeMemberModal();
+    try{const upRes=await api({action:'uploadPhoto',base64:S._pendingPhotoB64,mime:S._pendingPhotoMime||'image/jpeg',name:(name||'photo')+'_'+Date.now()});photoFileId=upRes.fileId;if(S._photoFileId&&S._photoFileId!==photoFileId){try{await api({action:'deletePhoto',fileId:S._photoFileId});}catch(_){}}}
+    catch(e){showToast('사진 업로드 실패: '+e.message,3000);hideLoading();return;}
+  }else if(S._photoRemoved&&S._photoFileId){try{await api({action:'deletePhoto',fileId:S._photoFileId});}catch(_){}photoFileId=null;}
   const data={name,gender:S.gender,birthYear:document.getElementById('mm-birth').value,deathYear:'',note:document.getElementById('mm-note').value.trim(),tab,isSelf:String(isSelf),isDead:String(isDead),photoFileId:photoFileId||''};
-  if(!S._pendingPhotoB64){ showLoading(); closeMemberModal(); }
-
+  if(!S._pendingPhotoB64){showLoading();closeMemberModal();}
   try{
     if(editId){
-      data.id=editId;
-      await api({action:'updateMember',data});
+      data.id=editId;await api({action:'updateMember',data});
       const idx=S.data[tab].members.findIndex(m=>m.id===editId);
-      if(idx>=0) S.data[tab].members[idx]={...S.data[tab].members[idx],...data};
-      if(isSelf) S.selfId[tab]=editId;
-      else if(S.selfId[tab]===editId) S.selfId[tab]=null;
+      if(idx>=0)S.data[tab].members[idx]={...S.data[tab].members[idx],...data};
+      if(isSelf)S.selfId[tab]=editId;else if(S.selfId[tab]===editId)S.selfId[tab]=null;
       await applySpouseChange(editId,tab);
-    } else {
-      const res=await api({action:'addMember',data});
-      const newId=res.id;
+    }else{
+      const res=await api({action:'addMember',data});const newId=res.id;
       S.data[tab].members.push({id:newId,...data});
-      if(isSelf) S.selfId[tab]=newId;
-      if(relKey&&relTarget) await doLinkRelation(relKey,relTarget,newId,tab);
+      if(isSelf)S.selfId[tab]=newId;
+      if(relKey&&relTarget)await doLinkRelation(relKey,relTarget,newId,tab);
     }
-    clearCache();
-    showToast(editId?'수정했습니다.':'추가했습니다.');
-  }catch(err){
-    showToast('저장 실패: '+(err.message||'서버 오류'));
-    hideLoading(); return;
-  }finally{ hideLoading(); renderTree(); }
+    clearCache();showToast(editId?'수정했습니다.':'추가했습니다.');
+  }catch(err){showToast('저장 실패: '+(err.message||'서버 오류'));hideLoading();return;}
+  finally{hideLoading();renderTree();}
 }
 
-// ── 관계 연결 ──────────────────────────────────────
 async function doLinkRelation(relKey,targetId,newId,tab){
-  const ro=buildRelObj(relKey,targetId,newId,tab);
-  if(!ro) return;
-  const res=await api({action:'addRelation',data:ro});
-  S.data[tab].relations.push({id:res.id,...ro});
-
-  // 형제 추가 시: 공통 부모의 parent-child만 추가 (sibling 행은 저장하지 않음)
+  const ro=buildRelObj(relKey,targetId,newId,tab);if(!ro)return;
+  const res=await api({action:'addRelation',data:ro});S.data[tab].relations.push({id:res.id,...ro});
   if(relKey==='sibling'){
     const parentRels=S.data[tab].relations.filter(r=>r.relationType==='parent-child'&&r.person2Id===targetId);
     for(const pr of parentRels){
-      // 이미 연결돼있으면 skip
       const already=S.data[tab].relations.some(r=>r.relationType==='parent-child'&&r.person1Id===pr.person1Id&&r.person2Id===newId);
-      if(already) continue;
+      if(already)continue;
       const pr2={person1Id:pr.person1Id,person2Id:newId,relationType:'parent-child',tab};
-      try{ const r2=await api({action:'addRelation',data:pr2}); S.data[tab].relations.push({id:r2.id,...pr2}); }
-      catch(_){ S.data[tab].relations.push({id:'L_'+Date.now(),...pr2}); }
+      try{const r2=await api({action:'addRelation',data:pr2});S.data[tab].relations.push({id:r2.id,...pr2});}
+      catch(_){S.data[tab].relations.push({id:'L_'+Date.now(),...pr2});}
     }
   }
 }
-
 function buildRelObj(relKey,targetId,newId,tab){
-  const MAP={
-    parent: {person1Id:newId,    person2Id:targetId,relationType:'parent-child'},
-    spouse: {person1Id:targetId, person2Id:newId,   relationType:'spouse'},
-    child:  {person1Id:targetId, person2Id:newId,   relationType:'parent-child'},
-    sibling:{person1Id:targetId, person2Id:newId,   relationType:'sibling'},
-  };
-  const r=MAP[relKey]; return r?{...r,tab}:null;
+  const MAP={parent:{person1Id:newId,person2Id:targetId,relationType:'parent-child'},spouse:{person1Id:targetId,person2Id:newId,relationType:'spouse'},child:{person1Id:targetId,person2Id:newId,relationType:'parent-child'},sibling:{person1Id:targetId,person2Id:newId,relationType:'sibling'}};
+  const r=MAP[relKey];return r?{...r,tab}:null;
 }
 
 async function deleteFromModal(){
-  const id=document.getElementById('mm-id').value;
-  const m=S.data[S.tab].members.find(x=>x.id===id);
-  if(!m||!confirm(m.name+'을 삭제할까요?\n연결된 관계도 모두 삭제됩니다.')) return;
-  closeMemberModal(); await doDeleteMember(id);
+  const id=document.getElementById('mm-id').value,m=S.data[S.tab].members.find(x=>x.id===id);
+  if(!m||!confirm(m.name+'을 삭제할까요?\n연결된 관계도 모두 삭제됩니다.'))return;
+  closeMemberModal();await doDeleteMember(id);
 }
 async function doDeleteMember(id){
-  showLoading();
-  try{ await api({action:'deleteMember',id}); }catch(_){}
+  showLoading();try{await api({action:'deleteMember',id});}catch(_){}
   const tab=S.tab;
-  S.data[tab].members  =S.data[tab].members.filter(x=>x.id!==id);
+  S.data[tab].members=S.data[tab].members.filter(x=>x.id!==id);
   S.data[tab].relations=S.data[tab].relations.filter(r=>r.person1Id!==id&&r.person2Id!==id);
-  if(S.selfId[tab]===id) S.selfId[tab]=null;
-  clearCache(); hideLoading(); renderTree(); showToast('삭제했습니다.');
+  if(S.selfId[tab]===id)S.selfId[tab]=null;
+  clearCache();hideLoading();renderTree();showToast('삭제했습니다.');
 }
 
-// ══════════════════════════════════════════════════
-// 사진
-// ══════════════════════════════════════════════════
+// ── 사진 ──
 function initPhotoListeners(){
-  if(initPhotoListeners._done) return; initPhotoListeners._done=true;
+  if(initPhotoListeners._done)return;initPhotoListeners._done=true;
   document.getElementById('mm-photo-wrap').addEventListener('click',()=>document.getElementById('mm-photo-file').click());
-  document.getElementById('mm-photo-file').addEventListener('change',function(){ onPhotoFileChange(this); });
-  document.getElementById('mm-photo-clear').addEventListener('click',function(e){ e.stopPropagation(); removePhoto(); });
+  document.getElementById('mm-photo-file').addEventListener('change',function(){onPhotoFileChange(this);});
+  document.getElementById('mm-photo-clear').addEventListener('click',function(e){e.stopPropagation();removePhoto();});
 }
 function resetPhotoUI(){
   initPhotoListeners();
-  S._pendingPhotoB64=null; S._pendingPhotoMime=null; S._photoFileId=null; S._photoRemoved=false;
+  S._pendingPhotoB64=null;S._pendingPhotoMime=null;S._photoFileId=null;S._photoRemoved=false;
   document.getElementById('mm-photo-file').value='';
-  document.getElementById('mm-photo-thumb').src='';
-  document.getElementById('mm-photo-thumb').style.display='none';
+  document.getElementById('mm-photo-thumb').src='';document.getElementById('mm-photo-thumb').style.display='none';
   document.getElementById('mm-photo-icon').style.display='block';
   document.getElementById('mm-photo-main').textContent='사진 추가';
   document.getElementById('mm-photo-clear').style.display='none';
 }
 function onPhotoFileChange(input){
-  const file=input.files[0]; if(!file) return;
-  if(file.size>5*1024*1024){ showToast('사진은 5MB 이하만 가능해요.',3000); return; }
+  const file=input.files[0];if(!file)return;
+  if(file.size>5*1024*1024){showToast('사진은 5MB 이하만 가능해요.',3000);return;}
   const reader=new FileReader();
   reader.onload=e=>{
-    const dataUrl=e.target.result;
-    const [meta,b64]=dataUrl.split(',');
-    const mime=meta.match(/:(.*?);/)[1];
-    S._pendingPhotoB64=b64; S._pendingPhotoMime=mime; S._photoRemoved=false;
-    document.getElementById('mm-photo-thumb').src=dataUrl;
-    document.getElementById('mm-photo-thumb').style.display='block';
+    const dataUrl=e.target.result,[meta,b64]=dataUrl.split(','),mime=meta.match(/:(.*?);/)[1];
+    S._pendingPhotoB64=b64;S._pendingPhotoMime=mime;S._photoRemoved=false;
+    document.getElementById('mm-photo-thumb').src=dataUrl;document.getElementById('mm-photo-thumb').style.display='block';
     document.getElementById('mm-photo-icon').style.display='none';
     document.getElementById('mm-photo-main').textContent='사진 선택됨 (저장 시 업로드)';
     document.getElementById('mm-photo-clear').style.display='block';
@@ -1135,37 +834,25 @@ function onPhotoFileChange(input){
   reader.readAsDataURL(file);
 }
 function removePhoto(){
-  S._pendingPhotoB64=null; S._pendingPhotoMime=null; S._photoRemoved=true;
+  S._pendingPhotoB64=null;S._pendingPhotoMime=null;S._photoRemoved=true;
   document.getElementById('mm-photo-file').value='';
-  document.getElementById('mm-photo-thumb').style.display='none';
-  document.getElementById('mm-photo-icon').style.display='block';
-  document.getElementById('mm-photo-main').textContent='사진 추가';
-  document.getElementById('mm-photo-clear').style.display='none';
+  document.getElementById('mm-photo-thumb').style.display='none';document.getElementById('mm-photo-icon').style.display='block';
+  document.getElementById('mm-photo-main').textContent='사진 추가';document.getElementById('mm-photo-clear').style.display='none';
 }
 
-// ══════════════════════════════════════════════════
-// API
-// ══════════════════════════════════════════════════
+// ── API ──
 async function api(payload){
-  if(!SCRIPT_URL||SCRIPT_URL.includes('YOUR_GAS')) throw new Error('GAS URL이 설정되지 않았습니다.');
+  if(!SCRIPT_URL||SCRIPT_URL.includes('YOUR_GAS'))throw new Error('GAS URL이 설정되지 않았습니다.');
   const res=await fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
-  if(!res.ok) throw new Error('서버 응답 오류: '+res.status);
-  const json=await res.json();
-  if(!json.success) throw new Error(json.error||'서버 오류');
-  return json.data;
+  if(!res.ok)throw new Error('서버 응답 오류: '+res.status);
+  const json=await res.json();if(!json.success)throw new Error(json.error||'서버 오류');return json.data;
 }
 
-// ══════════════════════════════════════════════════
-// UI 유틸
-// ══════════════════════════════════════════════════
-function showLoading(){ document.getElementById('loading').style.display='flex'; }
-function hideLoading(){ document.getElementById('loading').style.display='none'; }
+// ── UI 유틸 ──
+function showLoading(){document.getElementById('loading').style.display='flex';}
+function hideLoading(){document.getElementById('loading').style.display='none';}
 let _tt;
-function showToast(msg,ms=2400){
-  const t=document.getElementById('toast');
-  t.textContent=msg; t.classList.add('show');
-  clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove('show'),ms);
-}
+function showToast(msg,ms=2400){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),ms);}
 </script>
 </body>
 </html>
