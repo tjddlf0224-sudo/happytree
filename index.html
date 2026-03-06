@@ -249,9 +249,9 @@ el.classList.add(‘active’);
 closeMenu();renderTree();
 }
 
-// ══════════════════════════════════════════════════
+// ==================================================
 // order 유틸
-// ══════════════════════════════════════════════════
+// ==================================================
 function getOrder(m){
 if(m==null)return null;
 if(m.order===null||m.order===undefined||m.order===’’)return null;
@@ -268,9 +268,9 @@ if(oR!==null)return oR;
 return null;
 }
 
-// ══════════════════════════════════════════════════
+// ==================================================
 // 렌더링
-// ══════════════════════════════════════════════════
+// ==================================================
 function renderTree(){
 const g=d3.select(’#canvas-g’);
 g.selectAll(’*’).remove();
@@ -287,7 +287,7 @@ if(r.relationType===‘spouse’){spouseOf[r.person1Id]=r.person2Id;spouseOf[r.p
 if(r.relationType===‘parent-child’){if(!kidsOf[r.person1Id])kidsOf[r.person1Id]=new Set();kidsOf[r.person1Id].add(r.person2Id);}
 });
 
-// ── BFS 세대 배정 ──
+// – BFS 세대 배정 –
 const childIds=new Set(relations.filter(r=>r.relationType===‘parent-child’).map(r=>r.person2Id));
 let roots=members.filter(m=>{
 if(childIds.has(m.id))return false;
@@ -329,7 +329,7 @@ if(minLv!==0)members.forEach(m=>{levelOf[m.id]-=minLv;});
 const levels=[…new Set(Object.values(levelOf))].sort((a,b)=>a-b);
 const maxLv=levels.length?Math.max(…levels):0;
 
-// ── pair 구성 ──────────────────────────────────
+// – pair 구성 –––––––––––––––––
 // pair 단위로 order 계산 후 정렬 (배우자 포함 pair 전체가 이동)
 function pairW(p){return p.isCouple?(HR*4+CG):HR*2;}
 const pairsOf={};
@@ -354,9 +354,9 @@ lvMembers.forEach(m=>{
   }
 });
 
-// ✅ pair 단위 order 정렬
-// order 있는 pair → order 오름차순 (왼쪽)
-// order 없는 pair → order 있는 pair 뒤에 삽입순 유지
+//  pair 단위 order 정렬
+// order 있는 pair -> order 오름차순 (왼쪽)
+// order 없는 pair -> order 있는 pair 뒤에 삽입순 유지
 rawPairs.sort((a,b)=>{
   const oa=pairOrder(mMap,a.left,a.right);
   const ob=pairOrder(mMap,b.left,b.right);
@@ -371,7 +371,7 @@ pairsOf[lv]=rawPairs;
 
 });
 
-// ── X 좌표 계산 ──
+// – X 좌표 계산 –
 const pairCX=new Map();
 
 // 초기 배치: pairsOf 순서대로 왼쪽부터
@@ -389,10 +389,10 @@ if(sp)[…(kidsOf[sp]||[])].forEach(c=>{if((levelOf[c]??-1)===lv+1)s.add(c);});
 return […s];
 }
 
-// 아래→위: 부모를 자녀 중앙으로 이동 (단, order 있는 레벨은 전체 평행이동만)
+// 아래->위: 부모를 자녀 중앙으로 이동 (단, order 있는 레벨은 전체 평행이동만)
 for(let lv=maxLv-1;lv>=0;lv–){
 const ps=pairsOf[lv]||[];
-// 이 레벨에 order 있는 pair가 하나라도 있으면 → 전체 중앙만 맞춤
+// 이 레벨에 order 있는 pair가 하나라도 있으면 -> 전체 중앙만 맞춤
 const hasOrder=ps.some(p=>pairOrder(mMap,p.left,p.right)!==null);
 
 ```
@@ -425,7 +425,7 @@ resolveOverlap(lv);
 
 }
 
-// 위→아래: 간격 재보정 (order 순서 유지)
+// 위->아래: 간격 재보정 (order 순서 유지)
 for(let lv=1;lv<=maxLv;lv++)resolveOverlap(lv);
 
 function nodeXofPair(memberId,lv){
@@ -433,8 +433,8 @@ const cp=(pairsOf[lv]||[]).find(p=>p.left===memberId||p.right===memberId);
 return cp?(pairCX.get(cp.left)||null):null;
 }
 
-// ✅ 핵심: resolveOverlap은 pairsOf 순서(order 순)를 절대 바꾸지 않고
-//          간격만 맞춤 (왼쪽→오른쪽으로 밀기만)
+//  핵심: resolveOverlap은 pairsOf 순서(order 순)를 절대 바꾸지 않고
+//          간격만 맞춤 (왼쪽->오른쪽으로 밀기만)
 function resolveOverlap(lv){
 const ps=pairsOf[lv]||[];
 for(let i=1;i<ps.length;i++){
@@ -454,7 +454,7 @@ else{nodePos[pair.left].x=cx;}
 });
 });
 
-// ── 링크 ──
+// – 링크 –
 const linkG=g.append(‘g’).attr(‘class’,‘links’);
 relations.filter(r=>r.relationType===‘spouse’).forEach(r=>{
 const a=nodePos[r.person1Id],b=nodePos[r.person2Id];
@@ -477,7 +477,7 @@ linkG.append(‘line’).attr(‘x1’,kx).attr(‘y1’,midY).attr(‘x2’,kx)
 });
 });
 
-// ── 노드 ──
+// – 노드 –
 const nodeG=g.append(‘g’).attr(‘class’,‘nodes’);
 const selfId=S.selfId[S.tab];
 members.forEach(m=>{
